@@ -32,6 +32,11 @@ yay -S mimic-node-git
 paru -S mimic-node-git
 ```
 
+特别注意⚠️：
+小内存机器建议修改/etc/makepkg.conf
+将默认的构建模块从/tmp（内存里的tmpfs）移动到更大空间的硬盘上去！ 
+
+
 ## 快速开始
 
 安装完成后，请按顺序初始化节点：

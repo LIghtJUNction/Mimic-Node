@@ -10,7 +10,10 @@ serde_json = "1.0"
 anyhow = "1.0"
 thiserror = "2.0"
 tokio = { version = "1.49", features = ["full"] }
-reqwest = { version = "0.13", features = ["http2"] }
+reqwest = { version = "0.13", default-features = false, features = [
+  "http2",
+  "native-tls",
+] }
 uuid = { version = "1.19.0", features = ["v4", "fast-rng"] }
 rand = "0.9"
 base64 = "0.22"
