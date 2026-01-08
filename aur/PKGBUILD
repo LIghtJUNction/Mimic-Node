@@ -1,6 +1,6 @@
 # Maintainer: LightJunction <lightjunction@outlook.com>
 pkgname=mimic-node-git
-pkgver=r1.0.0
+pkgver=r5.0a5406b
 pkgrel=1
 pkgdesc="A stealthy sing-box node manager with Reality protocol support"
 arch=('any')

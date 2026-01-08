@@ -32,6 +32,35 @@ die() {
 command -v jq >/dev/null || die "jq is required but not installed."
 command -v openssl >/dev/null || die "openssl is required but not installed."
 
+# --- Overlay Integrity Check ---
+# We must ensure we are writing to the OverlayFS, not the physical root filesystem.
+if [ "${MIMIC_NODE_ROOT}" = "/" ]; then
+    # Remove trailing slash for mountpoint check
+    MOUNT_TARGET="${SING_BOX_ETC%/}"
+
+    # Skip check for help command to allow non-privileged usage of help
+    if [[ "${1:-}" != "help" && "${1:-}" != "-h" && "${1:-}" != "--help" ]]; then
+        if ! mountpoint -q "$MOUNT_TARGET"; then
+            log_warn "OverlayFS is NOT mounted at $MOUNT_TARGET."
+            log_info "Attempting to auto-mount..."
+
+            if command -v systemctl >/dev/null 2>&1; then
+                systemctl start mimic-node-mount.service >/dev/null 2>&1 || true
+            fi
+
+            # Fallback direct mount if systemd didn't work or isn't present
+            if ! mountpoint -q "$MOUNT_TARGET" && [ -x "/usr/bin/mimic-mount" ]; then
+                /usr/bin/mimic-mount start >/dev/null 2>&1 || true
+            fi
+
+            if ! mountpoint -q "$MOUNT_TARGET"; then
+                die "CRITICAL: Failed to mount OverlayFS at $MOUNT_TARGET. Please run 'sudo systemctl start mimic-node-mount'."
+            fi
+            log_info "OverlayFS mounted successfully."
+        fi
+    fi
+fi
+
 # sing-box is optional for this script. If it's absent we will use explicit, logged fallbacks.
 if command -v sing-box >/dev/null 2>&1; then
     HAS_SINGBOX=1
