@@ -1,0 +1,3 @@
+[submodule "aur/mimic-node-git"]
+	path = aur/mimic-node-git
+	url = ssh://aur@aur.archlinux.org/mimic-node-git.git
