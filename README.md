@@ -33,8 +33,13 @@ paru -S mimic-node-git
 ```
 
 特别注意⚠️：
-小内存机器建议修改/etc/makepkg.conf
+1. 小内存机器建议修改/etc/makepkg.conf
 将默认的构建模块从/tmp（内存里的tmpfs）移动到更大空间的硬盘上去！ 
+
+2. 如果存储空间也紧张，建议安装后清理：CARGO_TARGET_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/cargo-target"
+缺点是更新的时候不能加速，浪费时间重新编译
+
+3. mimic-node-bin, 暂时不提供.
 
 
 ## 快速开始
@@ -63,6 +68,15 @@ sudo systemctl enable --now sing-box
 ## 管理工具 (mimictl)
 
 `mimictl` 是您的控制中心。它会强制检查 OverlayFS 挂载状态，确保所有写入操作都发生在虚拟层，保护物理磁盘配置不被污染。
+
+## 默认配置
+可以通过以下命令恢复默认
+```bash
+sudo mimictl reset
+sudo mimictl apply
+```
+注意！默认配置里面的私钥是虚假的，为什么一定要留着占位
+因为mimictl apply会调用sing-box检查，检查通过才能应用，所以默认配置必须得通过检查才行
 
 ### 用户管理
 

@@ -1,7 +1,36 @@
 {
+  "log": {
+    "level": "warn",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "tag": "google",
+        "type": "tls",
+        "server": "8.8.8.8",
+        "detour": "direct"
+      },
+      {
+        "tag": "alidns",
+        "type": "udp",
+        "server": "223.5.5.5",
+        "detour": "direct"
+      }
+    ],
+    "rules": [
+      {
+        "rule_set": "geosite-cn",
+        "server": "alidns"
+      }
+    ],
+    "final": "google",
+    "strategy": "prefer_ipv4"
+  },
   "inbounds": [
     {
       "type": "vless",
+      "tag": "vless-in",
       "listen": "::",
       "listen_port": 443,
       "users": [],
@@ -14,7 +43,7 @@
             "server": "",
             "server_port": 443
           },
-          "private_key": "",
+          "private_key": "OHIe2FbgBaqlcCLMX5O6s6Zt2P-EehQjYYfbwgdnckk",
           "short_id": []
         }
       }
@@ -22,7 +51,56 @@
   ],
   "outbounds": [
     {
-      "type": "direct"
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
     }
-  ]
+  ],
+  "route": {
+    "rules": [
+      {
+        "inbound": "vless-in",
+        "action": "sniff"
+      },
+      {
+        "protocol": "dns",
+        "outbound": "direct"
+      },
+      {
+        "rule_set": ["geosite-cn", "geoip-cn"],
+        "outbound": "block"
+      }
+    ],
+    "rule_set": [
+      {
+        "tag": "geosite-cn",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
+        "download_detour": "direct"
+      },
+      {
+        "tag": "geoip-cn",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
+        "download_detour": "direct"
+      }
+    ],
+    "final": "direct",
+    "default_domain_resolver": {
+      "server": "google",
+      "strategy": "prefer_ipv4"
+    }
+  },
+  "experimental": {
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "secret": "mimic-node",
+      "default_mode": "Rule"
+    }
+  }
 }
