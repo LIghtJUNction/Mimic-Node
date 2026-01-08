@@ -9,8 +9,6 @@ Type=oneshot
 # 1. Detect optimal SNI and apply any staged config (config.new)
 #    This consumes config.new if it exists, merging it with new SNI.
 ExecStart=/usr/bin/mimictl sni
-# 2. Reload sing-box to apply changes
-ExecStartPost=/usr/bin/systemctl try-reload-or-restart sing-box
 
 [Install]
 WantedBy=multi-user.target

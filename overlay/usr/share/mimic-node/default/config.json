@@ -4,13 +4,7 @@
       "type": "vless",
       "listen": "::",
       "listen_port": 443,
-      "users": [
-        {
-          "name": "name(email:sid:level)",
-          "uuid": "",
-          "flow": "xtls-rprx-vision"
-        }
-      ],
+      "users": [],
       "tls": {
         "enabled": true,
         "server_name": "",
@@ -21,7 +15,7 @@
             "server_port": 443
           },
           "private_key": "",
-          "short_id": [""]
+          "short_id": []
         }
       }
     }

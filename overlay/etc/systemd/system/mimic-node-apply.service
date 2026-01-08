@@ -7,7 +7,6 @@ After=mimic-node-mount.service
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/mimictl apply
-ExecStartPost=/usr/bin/systemctl try-reload-or-restart sing-box
 
 [Install]
 WantedBy=multi-user.target
