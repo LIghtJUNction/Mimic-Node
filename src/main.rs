@@ -459,16 +459,15 @@ fn cmd_del(paths: &Paths, targets: Vec<String>) -> Result<()> {
 
     for target in targets {
         // Handle wildcards: convert glob to regex
-        let is_glob = target.contains('*') || target.contains('?');
-        let regex_str: String = if is_glob {
-            let escaped = regex::escape(&target)
+        let pattern = if target.contains('*') || target.contains('?') {
+            regex::escape(&target)
                 .replace("\\*", ".*")
-                .replace("\\?", ".");
-            format!("^{}:", escaped)
+                .replace("\\?", ".")
         } else {
-            format!("^{}:", regex::escape(&target))
+            regex::escape(&target)
         };
 
+        let regex_str = format!("^{}:", pattern);
         let re = Regex::new(&regex_str)?;
 
         if let Some(inbound) = config.inbounds.first_mut() {
@@ -654,7 +653,6 @@ async fn cmd_sni(paths: &Paths, target_sni: Option<String>) -> Result<()> {
 
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(2))
-            .http2_prior_knowledge() // For H2 checking
             .build()?;
 
         // Sequential scan for now to mimic shell script logic and progress bar

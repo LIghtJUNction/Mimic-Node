@@ -1,7 +1,7 @@
 # Mimic-Node
 
 > **拟态节点 (Mimic Node)**
-> 一个基于 Arch Linux + systemd 的隐形 sing-box 节点管理器，支持 Reality 协议。
+> 一个基于 Arch Linux + systemd 的隐形 sing-box 节点管理器， Reality 协议。
 
 Mimic-Node 专为 **Arch Linux** 服务器设计，采用自动化、“部署即忘”的理念，为您维护一个高可用的 Reality 节点。
 
@@ -14,10 +14,11 @@ Mimic-Node 专为 **Arch Linux** 服务器设计，采用自动化、“部署�
 
 ## 环境要求
 
+- **网络环境**： 需要公网ip
 - **操作系统**: Arch Linux (或 Manjaro/EndeavourOS 等衍生版)
 - **Init 系统**: systemd
 - **内核**: 必须支持 **OverlayFS** (现代内核几乎默认支持)
-- **AUR 助手**: `paru` 或 `yay` (推荐)
+- **AUR 助手**: `paru` (推荐) 或 `yay` 
 
 ## 安装
 
