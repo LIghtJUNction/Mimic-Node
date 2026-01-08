@@ -1,0 +1,13 @@
+[Unit]
+Description=Mimic-Node Configuration Overlay Mount
+After=local-fs.target
+Before=sing-box.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/mimic-mount start
+ExecStop=/usr/bin/mimic-mount stop
+
+[Install]
+WantedBy=multi-user.target

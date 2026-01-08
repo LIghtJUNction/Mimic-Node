@@ -1,0 +1,34 @@
+{
+  "inbounds": [
+    {
+      "type": "vless",
+      "listen": "::",
+      "listen_port": 443,
+      "users": [
+        {
+          "name": "name(email:sid:level)",
+          "uuid": "",
+          "flow": "xtls-rprx-vision"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "",
+        "reality": {
+          "enabled": true,
+          "handshake": {
+            "server": "",
+            "server_port": 443
+          },
+          "private_key": "",
+          "short_id": [""]
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct"
+    }
+  ]
+}

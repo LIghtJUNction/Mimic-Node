@@ -1,0 +1,12 @@
+[Unit]
+Description=Watch for Mimic-Node Staging Configuration Changes
+
+[Path]
+# Watch for changes to the staging config file.
+# When mimictl creates/updates this file (e.g. via batch add),
+# this triggers mimic-node-apply.service to apply the changes immediately.
+PathChanged=/etc/sing-box/config.new
+Unit=mimic-node-apply.service
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,106 @@
+#!/bin/bash
+set -e
+
+# Configuration
+# The directory where sing-box expects its config
+TARGET_DIR="/etc/sing-box"
+
+# Storage for our persistent changes and overlay workdir
+STATE_DIR="/var/lib/mimic-node"
+UPPER_DIR="$STATE_DIR/upper"
+WORK_DIR="$STATE_DIR/work"
+
+# Temporary location to expose the underlying system config (ReadOnly layer)
+LOWER_BIND_DIR="/run/mimic-node/lower"
+
+# Package provided defaults (ReadOnly layer, injects over system config)
+PACKAGE_DEFAULT_DIR="/usr/share/mimic-node/default"
+
+# Ensure script is run as root
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Error: This script must be run as root." >&2
+    exit 1
+fi
+
+case "$1" in
+    start)
+        # 0. Ensure OverlayFS kernel support
+        if ! grep -q "overlay" /proc/filesystems; then
+            echo "OverlayFS support not detected. Attempting to load 'overlay' module..."
+            modprobe overlay || {
+                echo "Error: Failed to load overlay module. Your kernel might not support OverlayFS." >&2
+                exit 1
+            }
+        fi
+
+        # 1. Ensure directories exist
+        # If sing-box isn't installed, create the target dir so we have something to mount on
+        if [ ! -d "$TARGET_DIR" ]; then
+            mkdir -p "$TARGET_DIR"
+        fi
+
+        mkdir -p "$UPPER_DIR" "$WORK_DIR" "$LOWER_BIND_DIR"
+
+        # 2. Check if already mounted
+        # Use findmnt to specifically check for overlay to avoid false positives with bind mounts
+        if findmnt -t overlay "$TARGET_DIR" >/dev/null; then
+            echo "Overlay already mounted at $TARGET_DIR"
+            exit 0
+        fi
+
+        # 3. Setup Lower Layer (System Config)
+        # We bind mount the original target directory to a temporary location.
+        # This allows the overlay to read the "original" files as the lower layer,
+        # even though we are about to cover the original path with the overlay mount.
+        if ! mountpoint -q "$LOWER_BIND_DIR"; then
+            mount --bind "$TARGET_DIR" "$LOWER_BIND_DIR"
+            # Remount as read-only to ensure we treat the system layer as immutable
+            mount -o remount,ro,bind "$LOWER_BIND_DIR"
+        fi
+
+        # 4. Mount OverlayFS
+        # Lower: The original system config (via bind mount) + Package defaults
+        # Upper: Our persistent modifications in /var/lib/mimic-node
+        LOWER_LAYERS="$LOWER_BIND_DIR"
+        if [ -d "$PACKAGE_DEFAULT_DIR" ]; then
+            LOWER_LAYERS="$PACKAGE_DEFAULT_DIR:$LOWER_LAYERS"
+        fi
+
+        mount -t overlay overlay \
+            -o lowerdir="$LOWER_LAYERS",upperdir="$UPPER_DIR",workdir="$WORK_DIR" \
+            "$TARGET_DIR"
+
+        echo "Mimic-Node overlay mounted successfully at $TARGET_DIR"
+        ;;
+
+    stop)
+        echo "Stopping Mimic-Node overlay..."
+
+        # Unmount the overlay
+        if mountpoint -q "$TARGET_DIR"; then
+            umount "$TARGET_DIR"
+            echo "Unmounted overlay at $TARGET_DIR"
+        fi
+
+        # Unmount the lower bind
+        if mountpoint -q "$LOWER_BIND_DIR"; then
+            umount "$LOWER_BIND_DIR"
+            echo "Unmounted lower bind at $LOWER_BIND_DIR"
+        fi
+        ;;
+
+    status)
+        if mountpoint -q "$TARGET_DIR"; then
+            echo "Active: Mimic-Node overlay is mounted."
+            findmnt "$TARGET_DIR"
+        else
+            echo "Inactive: Mimic-Node overlay is NOT mounted."
+            exit 3
+        fi
+        ;;
+
+    *)
+        echo "Usage: $0 {start|stop|status}"
+        exit 1
+        ;;
+esac
