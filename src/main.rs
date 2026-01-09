@@ -24,7 +24,9 @@ async fn main() -> Result<()> {
         Commands::Del { targets } => commands::user::del(&paths, targets)?,
         Commands::ResetUser { email } => commands::user::reset(&paths, email)?,
         Commands::Reset { keep_users } => commands::system::reset(&paths, keep_users)?,
-        Commands::Sni { domain } => commands::net::sni(&paths, domain).await?,
+        Commands::Discard { items, force } => commands::system::discard(&paths, items, force)?,
+        Commands::Sni { domain, file } => commands::net::sni(&paths, domain, file).await?,
+        Commands::Completions { shell, apply } => commands::net::completions(shell, apply)?,
         Commands::Link {
             email,
             addresses,

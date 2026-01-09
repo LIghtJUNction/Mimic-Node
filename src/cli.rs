@@ -50,6 +50,34 @@ pub enum Commands {
     Sni {
         /// Target domain (optional, auto-detects if missing)
         domain: Option<String>,
+
+        /// Path to SNI list file (optional, defaults to /usr/share/mimic-node/sni.txt)
+        #[arg(short = 'f', long = "file", value_name = "PATH")]
+        file: Option<std::path::PathBuf>,
+    },
+
+    /// Discard staged changes (remove `config.new` / `PUBKEY.new` in staging)
+    ///
+    /// If no `--item` is provided, both staging files will be removed.
+    Discard {
+        /// Items to discard: 'config' and/or 'pubkey'. Repeatable.
+        #[arg(short = 'i', long = "item", value_name = "ITEM")]
+        items: Vec<String>,
+
+        /// Force discard without interactive confirmation
+        #[arg(short = 'f', long = "force")]
+        force: bool,
+    },
+
+    /// Generate and install shell completions for current shell
+    Completions {
+        /// Shell to generate completions for (auto-detected if omitted)
+        #[arg(short = 's', long = "shell")]
+        shell: Option<String>,
+
+        /// Apply/install the completion to current user's shell configuration
+        #[arg(short = 'a', long = "apply")]
+        apply: bool,
     },
 
     /// Generate VLESS share links

@@ -8,25 +8,35 @@ use tokio::time::Duration;
 use crate::paths::Paths;
 use crate::utils::{load_config, save_config};
 
-pub async fn sni(paths: &Paths, target_sni: Option<String>) -> Result<()> {
+pub async fn sni(
+    paths: &Paths,
+    target_sni: Option<String>,
+    file: Option<std::path::PathBuf>,
+) -> Result<()> {
     let sni_to_set: String;
 
     if let Some(sni) = target_sni {
         sni_to_set = sni;
         eprintln!("{} Setting custom SNI: {}", "[INFO]".green(), sni_to_set);
     } else {
-        // Auto-detect
-        if !paths.sni_list.exists() {
-            return Err(anyhow!("SNI list file not found: {:?}", paths.sni_list));
+        // Auto-detect: choose SNI list file (CLI flag takes precedence)
+        let sni_path = if let Some(p) = file {
+            p
+        } else {
+            paths.sni_list.clone()
+        };
+
+        if !sni_path.exists() {
+            return Err(anyhow!("SNI list file not found: {:?}", sni_path));
         }
         eprintln!(
             "{} Auto-detecting best SNI from {:?}...",
             "[INFO]".green(),
-            paths.sni_list
+            sni_path
         );
 
-        let file = fs::File::open(&paths.sni_list)?;
-        let reader = io::BufReader::new(file);
+        let f = fs::File::open(&sni_path)?;
+        let reader = io::BufReader::new(f);
 
         let mut candidates = Vec::new();
         for line in reader.lines() {
@@ -230,4 +240,132 @@ pub async fn link(
     println!("{}", serde_json::to_string_pretty(&links)?);
 
     Ok(())
+}
+
+#[cfg(feature = "completions")]
+use clap::CommandFactory;
+#[cfg(feature = "completions")]
+use clap_complete::{
+    generate_to,
+    shells::{Bash, Elvish, Fish, PowerShell, Zsh},
+};
+use std::io::Write;
+
+#[cfg(feature = "completions")]
+pub fn completions(shell: Option<String>, apply: bool) -> Result<()> {
+    use std::path::PathBuf;
+
+    let shell_name = if let Some(s) = shell {
+        s
+    } else {
+        std::env::var("SHELL")
+            .unwrap_or_else(|_| "bash".to_string())
+            .split('/')
+            .last()
+            .unwrap()
+            .to_string()
+    };
+
+    let mut cmd = crate::cli::Cli::command();
+
+    let out_dir = std::env::var("XDG_CACHE_HOME")
+        .map(|p| PathBuf::from(p).join("mimic-node-completions"))
+        .unwrap_or_else(|_| {
+            PathBuf::from(std::env::var("HOME").unwrap()).join(".cache/mimic-node-completions")
+        });
+
+    std::fs::create_dir_all(&out_dir)?;
+
+    let generated_path = match shell_name.as_str() {
+        "bash" => generate_to(Bash, &mut cmd, "mimictl", &out_dir)?,
+        "zsh" => generate_to(Zsh, &mut cmd, "mimictl", &out_dir)?,
+        "fish" => generate_to(Fish, &mut cmd, "mimictl", &out_dir)?,
+        "pwsh" | "powershell" => generate_to(PowerShell, &mut cmd, "mimictl", &out_dir)?,
+        "elvish" => generate_to(Elvish, &mut cmd, "mimictl", &out_dir)?,
+        other => return Err(anyhow!("Unsupported shell: {}", other)),
+    };
+
+    println!(
+        "{} Generated completion at {:?}",
+        "[INFO]".green(),
+        generated_path
+    );
+
+    if apply {
+        let home =
+            std::env::var("HOME").map_err(|_| anyhow!("HOME environment variable not set"))?;
+        match shell_name.as_str() {
+            "bash" => {
+                let rc = PathBuf::from(home).join(".bashrc");
+                let source_line = format!(
+                    "\n# mimictl completions\nsource \"{}\"\n",
+                    generated_path.display()
+                );
+                if rc.exists() {
+                    let content = std::fs::read_to_string(&rc)?;
+                    if !content.contains(&source_line) {
+                        let mut f = std::fs::OpenOptions::new().append(true).open(&rc)?;
+                        f.write_all(source_line.as_bytes())?;
+                        println!("{} Appended source line to {:?}", "[INFO]".green(), rc);
+                    } else {
+                        println!(
+                            "{} Source line already present in {:?}",
+                            "[INFO]".green(),
+                            rc
+                        );
+                    }
+                } else {
+                    std::fs::write(&rc, source_line)?;
+                    println!("{} Created {:?} with source line", "[INFO]".green(), rc);
+                }
+            }
+            "zsh" => {
+                let rc = PathBuf::from(home).join(".zshrc");
+                let source_line = format!(
+                    "\n# mimictl completions\nsource \"{}\"\n",
+                    generated_path.display()
+                );
+                if rc.exists() {
+                    let content = std::fs::read_to_string(&rc)?;
+                    if !content.contains(&source_line) {
+                        let mut f = std::fs::OpenOptions::new().append(true).open(&rc)?;
+                        f.write_all(source_line.as_bytes())?;
+                        println!("{} Appended source line to {:?}", "[INFO]".green(), rc);
+                    } else {
+                        println!(
+                            "{} Source line already present in {:?}",
+                            "[INFO]".green(),
+                            rc
+                        );
+                    }
+                } else {
+                    std::fs::write(&rc, source_line)?;
+                    println!("{} Created {:?} with source line", "[INFO]".green(), rc);
+                }
+            }
+            "fish" => {
+                let comp_dir = PathBuf::from(home).join(".config/fish/completions");
+                std::fs::create_dir_all(&comp_dir)?;
+                let dest = comp_dir.join("mimictl.fish");
+                std::fs::copy(&generated_path, &dest)?;
+                println!(
+                    "{} Installed fish completion to {:?}",
+                    "[INFO]".green(),
+                    dest
+                );
+            }
+            other => {
+                eprintln!("{} Automatic apply for shell '{}' is not implemented; you can source the file manually: {:?}", "[WARN]".yellow(), other, generated_path);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(not(feature = "completions"))]
+pub fn completions(_shell: Option<String>, _apply: bool) -> Result<()> {
+    Err(anyhow!(
+        "Completions feature not enabled at compile time. Rebuild with --features completions"
+    ))
 }
