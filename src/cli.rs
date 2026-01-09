@@ -117,5 +117,17 @@ pub enum Commands {
     Check,
 
     /// Verify configuration integrity (keys, sids, uuids)
-    Verify,
+    Verify {
+        /// Enable verbose output
+        #[arg(short, long)]
+        verbose: bool,
+
+        /// Custom config file path
+        #[arg(short, long, value_name = "FILE")]
+        config: Option<std::path::PathBuf>,
+
+        /// Verify a specific VLESS link details
+        #[arg(short, long, value_name = "LINK")]
+        link: Option<String>,
+    },
 }

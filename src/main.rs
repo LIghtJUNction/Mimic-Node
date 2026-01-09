@@ -11,12 +11,23 @@ use paths::Paths;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args = Cli::parse();
+
     let paths = Paths::new();
 
-    // Ensure environment is ready (OverlayFS)
-    utils::check_overlay(&paths)?;
+    // Ensure environment is ready (OverlayFS), unless command doesn't need it
+    let need_overlay = !matches!(
+        &args.command,
+        Commands::Completions { .. }
+            | Commands::Verify {
+                config: Some(_),
+                ..
+            }
+    );
 
-    let args = Cli::parse();
+    if need_overlay {
+        utils::check_overlay(&paths)?;
+    }
 
     match args.command {
         Commands::GenKeys => commands::keys::generate(&paths)?,
@@ -38,7 +49,11 @@ async fn main() -> Result<()> {
         Commands::Show => commands::system::show(&paths)?,
         Commands::Apply => commands::system::apply(&paths)?,
         Commands::Check => commands::system::check(&paths)?,
-        Commands::Verify => commands::verify::verify(&paths)?,
+        Commands::Verify {
+            verbose,
+            config,
+            link,
+        } => commands::verify::verify(&paths, verbose, config, link)?,
     }
 
     Ok(())
