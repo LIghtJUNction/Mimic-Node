@@ -6,9 +6,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-# 1. Detect optimal SNI and apply any staged config (config.new)
-#    This consumes config.new if it exists, merging it with new SNI.
-ExecStart=/usr/bin/mimictl sni
+ExecStart=/usr/bin/mimictl sni && /usr/bin/mimictl apply
 
 [Install]
 WantedBy=multi-user.target

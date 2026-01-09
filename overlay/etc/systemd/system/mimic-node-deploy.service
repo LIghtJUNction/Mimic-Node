@@ -1,5 +1,5 @@
 [Unit]
-Description=Apply Mimic-Node Staged Configuration
+Description=Deploy Mimic-Node
 ConditionPathExists=/etc/sing-box/config.json
 Requires=mimic-node-mount.service
 After=mimic-node-mount.service
