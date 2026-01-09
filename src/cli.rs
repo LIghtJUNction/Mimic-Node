@@ -33,10 +33,27 @@ pub enum Commands {
         targets: Vec<String>,
     },
 
-    /// Reset UUID and SID for a specific user
+    /// Update user attributes (supports batch). Example: `mimictl update '*@example.com' --level 1`
+    #[command(visible_aliases = ["mod", "chg", "set"])]
+    Update {
+        /// Emails, UUIDs or glob patterns to match users
+        #[arg(required = true)]
+        targets: Vec<String>,
+
+        /// Set the user's level for all matched users
+        #[arg(short, long)]
+        level: Option<u32>,
+
+        /// Rename the user's email. Only allowed when exactly one user is matched.
+        #[arg(short = 'e', long = "email")]
+        email: Option<String>,
+    },
+
+    /// Reset UUID and SID for user(s) (supports batch and patterns)
     ResetUser {
-        /// Email of the user
-        email: String,
+        /// Emails or glob patterns to match users (e.g., "alice@example.com", "*@example.com")
+        #[arg(required = true)]
+        targets: Vec<String>,
     },
 
     /// Reset global config to defaults
@@ -104,8 +121,12 @@ pub enum Commands {
         filter: Option<String>,
     },
 
-    /// Show details for a specific user
-    Info { email: String },
+    /// Show details for specific user(s) (supports batch and patterns)
+    Info {
+        /// Emails or glob patterns to match users
+        #[arg(required = true)]
+        targets: Vec<String>,
+    },
 
     /// Show current config and PUBKEY
     Show,

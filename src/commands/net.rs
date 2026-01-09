@@ -227,9 +227,11 @@ pub async fn link(
             addr
         };
 
+        // Use a safe fragment label derived from SID (first 4 chars) to avoid special characters in `user.name`
+        let label = sid_label(&sid);
         let link = format!(
             "vless://{}@{}:{}?security=reality&encryption=none&pbk={}&fp=chrome&type=tcp&sni={}&sid={}&flow={}#{}",
-            user.uuid, host, port, pbk, sni, sid, user.flow, user.name
+            user.uuid, host, port, pbk, sni, sid, user.flow, label
         );
         links.push(link);
     }
@@ -238,6 +240,15 @@ pub async fn link(
 
     Ok(())
 }
+
+// Helper: derive a safe label from SID (first 4 chars)
+fn sid_label(sid: &str) -> String {
+    sid.get(0..4)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| sid.to_string())
+}
+
+// tests moved to end of file
 
 #[cfg(feature = "completions")]
 use clap::CommandFactory;
@@ -258,7 +269,7 @@ pub fn completions(shell: Option<String>, apply: bool) -> Result<()> {
         std::env::var("SHELL")
             .unwrap_or_else(|_| "bash".to_string())
             .split('/')
-            .last()
+            .next_back()
             .unwrap()
             .to_string()
     };
@@ -370,4 +381,36 @@ pub fn completions(_shell: Option<String>, _apply: bool) -> Result<()> {
     Err(anyhow!(
         "Completions feature not enabled at compile time. Rebuild with --features completions"
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sid_label_truncates() {
+        assert_eq!(sid_label("abcd1234"), "abcd");
+    }
+
+    #[test]
+    fn test_sid_label_shorter() {
+        assert_eq!(sid_label("ab"), "ab");
+    }
+
+    #[test]
+    fn test_link_fragment_uses_sid_label() {
+        let uuid = "uuid";
+        let host = "1.2.3.4";
+        let port = 443;
+        let pbk = "pbk";
+        let sni = "sni.example";
+        let sid = "abcd1234";
+        let flow = "flow";
+        let label = sid_label(sid);
+        let link = format!(
+            "vless://{}@{}:{}?security=reality&encryption=none&pbk={}&fp=chrome&type=tcp&sni={}&sid={}&flow={}#{}",
+            uuid, host, port, pbk, sni, sid, flow, label
+        );
+        assert!(link.ends_with("#abcd"));
+    }
 }

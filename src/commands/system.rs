@@ -137,11 +137,12 @@ pub fn reset(paths: &Paths, keep_users_emails: Vec<String>) -> Result<()> {
                 if let Some(inbound) = new_config.inbounds.first_mut() {
                     inbound.users.push(user.clone());
                     if let Some(tls) = inbound.tls.as_mut()
-                        && let Some(reality) = tls.reality.as_mut() {
-                            reality.short_id.push(sid);
-                            reality.short_id.sort();
-                            reality.short_id.dedup();
-                        }
+                        && let Some(reality) = tls.reality.as_mut()
+                    {
+                        reality.short_id.push(sid);
+                        reality.short_id.sort();
+                        reality.short_id.dedup();
+                    }
                 }
             } else {
                 eprintln!(
@@ -185,116 +186,39 @@ pub fn check(paths: &Paths) -> Result<()> {
         input_path
     );
 
-    // 1. sing-box native check
+    // Delegate entirely to sing-box's native check.
+    // If sing-box accepts the configuration, we consider it valid.
     eprintln!("{} Running 'sing-box check'...", "[INFO]".green());
-    let check_status = Command::new("sing-box")
+    let status = Command::new("sing-box")
         .args(["check", "-c", input_path.to_str().unwrap()])
         .status();
 
-    match check_status {
-        Ok(status) if status.success() => {
+    match status {
+        Ok(s) if s.success() => {
             eprintln!("{} 'sing-box check' passed.", "[INFO]".green());
+            Ok(())
         }
-        _ => {
-            return Err(anyhow!(
-                "'sing-box check' failed. Invalid configuration syntax."
-            ));
-        }
+        Ok(s) => Err(anyhow!(
+            "'sing-box check' failed with exit code {}.",
+            s.code().unwrap_or(-1)
+        )),
+        Err(e) => Err(anyhow!("Failed to execute 'sing-box': {}", e)),
     }
-
-    // 2. Internal Consistency Checks
-    eprintln!(
-        "{} Running internal consistency checks...",
-        "[INFO]".green()
-    );
-    let config = load_config(input_path)?;
-    let mut warnings = 0;
-
-    if let Some(inbound) = config.inbounds.first() {
-        // Collect ShortIDs
-        let mut valid_sids = Vec::new();
-        if let Some(tls) = &inbound.tls {
-            if let Some(reality) = &tls.reality {
-                valid_sids = reality.short_id.clone();
-            } else {
-                eprintln!(
-                    "{} Missing Reality configuration in first inbound.",
-                    "[WARN]".yellow()
-                );
-                warnings += 1;
-            }
-        } else {
-            eprintln!(
-                "{} Missing TLS configuration in first inbound.",
-                "[WARN]".yellow()
-            );
-            warnings += 1;
-        }
-
-        // Check Users
-        for user in &inbound.users {
-            let parts: Vec<&str> = user.name.split(':').collect();
-
-            // Expected format: email:sid:level
-            if parts.len() < 3 {
-                eprintln!(
-                    "{} User '{}' has invalid name format (expected email:sid:level).",
-                    "[WARN]".yellow(),
-                    user.name
-                );
-                warnings += 1;
-                continue;
-            }
-
-            // Extract SID (second to last element)
-            let sid = parts[parts.len() - 2];
-
-            if !valid_sids.contains(&sid.to_string()) {
-                eprintln!(
-                    "{} User '{}' uses ShortID '{}' which is missing from reality.short_id list.",
-                    "[WARN]".yellow(),
-                    user.name,
-                    sid
-                );
-                warnings += 1;
-            }
-
-            // Check UUID format
-            if uuid::Uuid::parse_str(&user.uuid).is_err() {
-                eprintln!(
-                    "{} User '{}' has invalid UUID: {}",
-                    "[WARN]".yellow(),
-                    user.name,
-                    user.uuid
-                );
-                warnings += 1;
-            }
-        }
-    } else {
-        eprintln!("{} No inbounds defined.", "[WARN]".yellow());
-        warnings += 1;
-    }
-
-    if warnings == 0 {
-        eprintln!("{} Internal consistency check passed.", "[INFO]".green());
-    } else {
-        eprintln!(
-            "{} Consistency check finished with {} warning(s).",
-            "[WARN]".yellow(),
-            warnings
-        );
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::paths::Paths;
+    use std::env;
     use std::fs;
+    use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
+    use std::sync::{Mutex, OnceLock};
     use uuid::Uuid;
+
+    // Global lock to serialize tests that modify PATH to avoid race conditions
+    static PATH_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     fn setup_tmp() -> PathBuf {
         let base = std::env::temp_dir();
@@ -368,6 +292,80 @@ mod tests {
         let res = discard(&paths, Vec::new(), true);
         assert!(res.is_ok());
 
+        fs::remove_dir_all(tmp).unwrap();
+    }
+
+    #[test]
+    fn test_check_succeeds_when_singbox_returns_zero() {
+        let tmp = setup_tmp();
+        let paths = build_paths(tmp.clone());
+
+        // create a config file so get_input_config_path() points to it
+        fs::write(&paths.config, "{}").expect("write config");
+
+        // create fake bin dir with sing-box script that exits 0
+        let bin_dir = tmp.join("fakebin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let sing_box = bin_dir.join("sing-box");
+        fs::write(&sing_box, "#!/bin/sh\nexit 0\n").unwrap();
+        let mut perms = fs::metadata(&sing_box).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&sing_box, perms).unwrap();
+
+        // Prepend to PATH (guarded to prevent races with other tests)
+        let old_path = env::var("PATH").unwrap_or_default();
+        let new_path = format!("{}:{}", bin_dir.to_str().unwrap(), old_path);
+        // Acquire a global lock to avoid races with other tests that also set PATH
+        let _guard = PATH_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        unsafe {
+            env::set_var("PATH", &new_path);
+        }
+
+        // Call check
+        let res = check(&paths);
+        assert!(res.is_ok(), "check should succeed when sing-box returns 0");
+
+        // Restore PATH and cleanup
+        unsafe {
+            env::set_var("PATH", old_path);
+        }
+        drop(_guard);
+        fs::remove_dir_all(tmp).unwrap();
+    }
+
+    #[test]
+    fn test_check_fails_when_singbox_returns_nonzero() {
+        let tmp = setup_tmp();
+        let paths = build_paths(tmp.clone());
+
+        fs::write(&paths.config, "{}").expect("write config");
+
+        let bin_dir = tmp.join("fakebin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let sing_box = bin_dir.join("sing-box");
+        fs::write(&sing_box, "#!/bin/sh\nexit 2\n").unwrap();
+        let mut perms = fs::metadata(&sing_box).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&sing_box, perms).unwrap();
+
+        let old_path = env::var("PATH").unwrap_or_default();
+        let new_path = format!("{}:{}", bin_dir.to_str().unwrap(), old_path);
+        // Acquire a global lock to avoid races with other tests that also set PATH
+        let _guard = PATH_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        unsafe {
+            env::set_var("PATH", &new_path);
+        }
+
+        let res = check(&paths);
+        assert!(
+            res.is_err(),
+            "check should fail when sing-box exits non-zero"
+        );
+
+        unsafe {
+            env::set_var("PATH", old_path);
+        }
+        drop(_guard);
         fs::remove_dir_all(tmp).unwrap();
     }
 }

@@ -23,7 +23,7 @@
       }
     ],
     "final": "google",
-    "strategy": "prefer_ipv4"
+    "strategy": "prefer_ipv6"
   },
   "inbounds": [
     {
@@ -91,7 +91,7 @@
     "final": "direct",
     "default_domain_resolver": {
       "server": "google",
-      "strategy": "prefer_ipv4"
+      "strategy": "prefer_ipv6"
     }
   },
   "experimental": {
