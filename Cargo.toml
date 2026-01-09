@@ -21,6 +21,7 @@ base64 = "0.22"
 regex = "1.12"
 colored = "3.0"
 hex = "0.4"
+x25519-dalek = "2"
 
 [features]
 default = []

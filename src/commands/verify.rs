@@ -2,8 +2,7 @@ use anyhow::{Result, anyhow};
 use base64::{Engine as _, engine::general_purpose};
 use colored::*;
 use std::collections::{HashMap, HashSet};
-use std::io::Write;
-use std::process::{Command, Stdio};
+use x25519_dalek::{X25519_BASEPOINT_BYTES, x25519};
 
 use crate::paths::Paths;
 use crate::utils::load_config;
@@ -109,7 +108,7 @@ pub fn verify(paths: &Paths) -> Result<()> {
             match general_purpose::URL_SAFE_NO_PAD.decode(&stored_pubkey) {
                 Ok(pk) if pk.len() == 32 => {
                     // Try to derive public key from private key to verify match
-                    match derive_x25519_pubkey_openssl(&priv_key_bytes) {
+                    match derive_x25519_pubkey(&priv_key_bytes) {
                         Ok(derived_pubkey) => {
                             if pk != derived_pubkey {
                                 eprintln!(
@@ -262,60 +261,16 @@ pub fn verify(paths: &Paths) -> Result<()> {
     Ok(())
 }
 
-fn derive_x25519_pubkey_openssl(priv_key: &[u8]) -> Result<Vec<u8>> {
-    // Construct minimal ASN.1 DER for X25519 Private Key
-    // 30 2E 02 01 00 30 05 06 03 2B 65 6E 04 22 04 20 <32-bytes-key>
-    let mut der = vec![
-        0x30, 0x2E, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2B, 0x65, 0x6E, 0x04, 0x22, 0x04,
-        0x20,
-    ];
-    der.extend_from_slice(priv_key);
-
-    let mut child = Command::new("openssl")
-        .args(["pkey", "-inform", "DER", "-text_pub", "-noout"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| anyhow!("openssl not found"))?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(&der)?;
+fn derive_x25519_pubkey(priv_key: &[u8]) -> Result<Vec<u8>> {
+    // Pure-Rust X25519 public key derivation using x25519-dalek's x25519 function
+    if priv_key.len() != 32 {
+        return Err(anyhow!("Private key length must be 32 bytes"));
     }
+    let mut scalar = [0u8; 32];
+    scalar.copy_from_slice(priv_key);
 
-    let output = child.wait_with_output()?;
-    if !output.status.success() {
-        return Err(anyhow!("openssl failed"));
-    }
+    // Compute public key: scalar * basepoint
+    let pubkey = x25519(scalar, X25519_BASEPOINT_BYTES);
 
-    // Output format is like:
-    // Public-Key: (253 bit)
-    // pub:
-    //     5e:c9:...
-    //     ...
-    let out_str = String::from_utf8(output.stdout)?;
-    let mut hex_str = String::new();
-    let mut capturing = false;
-
-    for line in out_str.lines() {
-        let line = line.trim();
-        if line.starts_with("pub:") {
-            capturing = true;
-            continue;
-        }
-        if capturing {
-            if line.contains(':') {
-                hex_str.push_str(&line.replace(':', ""));
-            } else {
-                break;
-            }
-        }
-    }
-
-    let pub_key = hex::decode(&hex_str)?;
-    if pub_key.len() != 32 {
-        return Err(anyhow!("Derived key length mismatch"));
-    }
-
-    Ok(pub_key)
+    Ok(pubkey.to_vec())
 }

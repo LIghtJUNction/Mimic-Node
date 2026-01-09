@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use colored::*;
 use std::fs;
 use std::io::{self, BufRead};
@@ -81,30 +81,32 @@ pub async fn sni(
                 .output();
 
             if let Ok(output) = sing_box_check
-                && output.status.success() {
-                    eprintln!("\n{} Found perfect match: {}", "[INFO]".green(), cand);
-                    found_perfect = Some(cand);
-                    break;
-                }
+                && output.status.success()
+            {
+                eprintln!("\n{} Found perfect match: {}", "[INFO]".green(), cand);
+                found_perfect = Some(cand);
+                break;
+            }
 
             // 3. Fallback H2 check
             // Since we configured client with http2_prior_knowledge/support, we can check version?
             // Actually, for a real H2 check on HTTPS, we need ALPN. reqwest supports it by default.
             if best_fallback.is_none()
                 && let Ok(response) = resp
-                    && response.version() == reqwest::Version::HTTP_2 {
-                        best_fallback = Some(cand.clone());
-                        // If no sing-box available, stop here
-                        if Command::new("sing-box").arg("version").output().is_err() {
-                            eprintln!(
-                                "\n{} Selected SNI (H2 supported): {}",
-                                "[INFO]".green(),
-                                cand
-                            );
-                            found_perfect = Some(cand);
-                            break;
-                        }
-                    }
+                && response.version() == reqwest::Version::HTTP_2
+            {
+                best_fallback = Some(cand.clone());
+                // If no sing-box available, stop here
+                if Command::new("sing-box").arg("version").output().is_err() {
+                    eprintln!(
+                        "\n{} Selected SNI (H2 supported): {}",
+                        "[INFO]".green(),
+                        cand
+                    );
+                    found_perfect = Some(cand);
+                    break;
+                }
+            }
         }
         eprintln!(); // Newline after dots
 
@@ -127,12 +129,13 @@ pub async fn sni(
     let mut config = load_config(input_path)?;
 
     if let Some(inbound) = config.inbounds.first_mut()
-        && let Some(tls) = inbound.tls.as_mut() {
-            tls.server_name = sni_to_set.clone();
-            if let Some(reality) = tls.reality.as_mut() {
-                reality.handshake.server = sni_to_set.clone();
-            }
+        && let Some(tls) = inbound.tls.as_mut()
+    {
+        tls.server_name = sni_to_set.clone();
+        if let Some(reality) = tls.reality.as_mut() {
+            reality.handshake.server = sni_to_set.clone();
         }
+    }
 
     save_config(&paths.staging, &config)?;
     eprintln!(
@@ -196,14 +199,16 @@ pub async fn link(
 
         if detect_v4
             && let Ok(ip) = client.get("https://api.ipify.org").send().await
-                && let Ok(text) = ip.text().await {
-                    addresses.push(text);
-                }
+            && let Ok(text) = ip.text().await
+        {
+            addresses.push(text);
+        }
         if detect_v6
             && let Ok(ip) = client.get("https://api6.ipify.org").send().await
-                && let Ok(text) = ip.text().await {
-                    addresses.push(text);
-                }
+            && let Ok(text) = ip.text().await
+        {
+            addresses.push(text);
+        }
         if addresses.is_empty() {
             eprintln!(
                 "{} Could not detect public IP. Using placeholder.",
@@ -244,6 +249,7 @@ use clap_complete::{
 
 #[cfg(feature = "completions")]
 pub fn completions(shell: Option<String>, apply: bool) -> Result<()> {
+    use std::io::Write;
     use std::path::PathBuf;
 
     let shell_name = if let Some(s) = shell {
@@ -346,7 +352,12 @@ pub fn completions(shell: Option<String>, apply: bool) -> Result<()> {
                 );
             }
             other => {
-                eprintln!("{} Automatic apply for shell '{}' is not implemented; you can source the file manually: {:?}", "[WARN]".yellow(), other, generated_path);
+                eprintln!(
+                    "{} Automatic apply for shell '{}' is not implemented; you can source the file manually: {:?}",
+                    "[WARN]".yellow(),
+                    other,
+                    generated_path
+                );
             }
         }
     }
