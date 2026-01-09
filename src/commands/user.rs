@@ -18,13 +18,11 @@ fn sync_short_ids(config: &mut config::SingBoxConfig) {
         for user in &inbound.users {
             let parts: Vec<&str> = user.name.split(':').collect();
             // Format is email:sid:level. We need the SID (second to last)
-            if parts.len() >= 3 {
-                if let Some(sid) = parts.get(parts.len() - 2) {
-                    if !sid.is_empty() {
+            if parts.len() >= 3
+                && let Some(sid) = parts.get(parts.len() - 2)
+                    && !sid.is_empty() {
                         active_sids.push(sid.to_string());
                     }
-                }
-            }
         }
 
         // Sort and dedup
@@ -32,11 +30,10 @@ fn sync_short_ids(config: &mut config::SingBoxConfig) {
         active_sids.dedup();
 
         // Update config
-        if let Some(tls) = inbound.tls.as_mut() {
-            if let Some(reality) = tls.reality.as_mut() {
+        if let Some(tls) = inbound.tls.as_mut()
+            && let Some(reality) = tls.reality.as_mut() {
                 reality.short_id = active_sids;
             }
-        }
     }
 }
 
@@ -119,29 +116,84 @@ pub fn del(paths: &Paths, targets: Vec<String>) -> Result<()> {
     let input_path = paths.get_input_config_path();
     let mut config = load_config(input_path)?;
 
-    for target in targets {
-        // Handle wildcards: convert glob to regex
-        let pattern = if target.contains('*') || target.contains('?') {
-            regex::escape(&target)
-                .replace("\\*", ".*")
-                .replace("\\?", ".")
-        } else {
-            regex::escape(&target)
-        };
+    // Track total deletions across all targets
+    let mut total_deleted: usize = 0;
 
-        let regex_str = format!("^{}:", pattern);
-        let re = Regex::new(&regex_str)?;
+    for target in targets {
+        let mut deleted_here: usize = 0;
 
         if let Some(inbound) = config.inbounds.first_mut() {
-            inbound.users.retain(|u| !re.is_match(&u.name));
+            // 1) If target is a UUID, try exact UUID match first
+            if uuid::Uuid::parse_str(&target).is_ok() {
+                let before = inbound.users.len();
+                inbound.users.retain(|u| u.uuid != target);
+                deleted_here = before - inbound.users.len();
+
+                // If no exact UUID match, try substring fallback (name or uuid or local part of email)
+                if deleted_here == 0 {
+                    let before2 = inbound.users.len();
+                    let local = target.split('@').next().unwrap_or(&target).to_string();
+                    inbound.users.retain(|u| {
+                        !(u.uuid.contains(&target)
+                            || u.name.contains(&target)
+                            || u.name.contains(&local))
+                    });
+                    deleted_here = before2 - inbound.users.len();
+                }
+            } else {
+                // 2) Handle wildcard or anchored email/specific name match
+                let pattern = if target.contains('*') || target.contains('?') {
+                    regex::escape(&target)
+                        .replace("\\*", ".*")
+                        .replace("\\?", ".")
+                } else {
+                    regex::escape(&target)
+                };
+
+                // Try anchored-match (email:sid:level prefix)
+                let regex_str = format!("^{}:", pattern);
+                let re = Regex::new(&regex_str)?;
+                let before = inbound.users.len();
+                inbound.users.retain(|u| !re.is_match(&u.name));
+                deleted_here = before - inbound.users.len();
+
+                // 3) If nothing matched, do a substring fallback on name/uuid/local part
+                if deleted_here == 0 {
+                    let before2 = inbound.users.len();
+                    let local = target.split('@').next().unwrap_or(&target).to_string();
+                    inbound.users.retain(|u| {
+                        !(u.name.contains(&target)
+                            || u.name.contains(&local)
+                            || u.uuid.contains(&target))
+                    });
+                    deleted_here = before2 - inbound.users.len();
+                }
+            }
         }
 
-        eprintln!("{} Processed deletion for: {}", "[INFO]".green(), target);
+        if deleted_here > 0 {
+            total_deleted += deleted_here;
+            eprintln!(
+                "{} Deleted {} user(s) for target: {}",
+                "[INFO]".green(),
+                deleted_here,
+                target
+            );
+        } else {
+            eprintln!(
+                "{} No users matched for target: {}",
+                "[WARN]".yellow(),
+                target
+            );
+        }
     }
 
-    // Sync SIDs
-    sync_short_ids(&mut config);
+    if total_deleted == 0 {
+        return Err(anyhow!("No users matched the provided target(s)."));
+    }
 
+    // Only sync and persist when we actually deleted something
+    sync_short_ids(&mut config);
     save_config(&paths.staging, &config)?;
 
     eprintln!(
@@ -157,12 +209,11 @@ pub fn reset(paths: &Paths, email: String) -> Result<()> {
     let mut config = load_config(input_path)?;
 
     let mut found = false;
-    let mut old_sid = String::new();
     let mut new_sid = String::new();
     let mut new_uuid = String::new();
 
-    if let Some(inbound) = config.inbounds.first_mut() {
-        if let Some(user) = inbound
+    if let Some(inbound) = config.inbounds.first_mut()
+        && let Some(user) = inbound
             .users
             .iter_mut()
             .find(|u| u.name.starts_with(&format!("{}:", email)))
@@ -171,8 +222,6 @@ pub fn reset(paths: &Paths, email: String) -> Result<()> {
             // Parse name: email:sid:level
             let parts: Vec<&str> = user.name.split(':').collect();
             let level = parts.last().unwrap_or(&"0");
-            old_sid = parts.get(parts.len() - 2).unwrap_or(&"").to_string();
-
             new_sid = generate_sid();
             new_uuid = generate_uuid();
             let new_name = format!("{}:{}:{}", email, new_sid, level);
@@ -186,14 +235,13 @@ pub fn reset(paths: &Paths, email: String) -> Result<()> {
             eprintln!(
                 "{} Old SID: {} -> New SID: {}",
                 "[INFO]".green(),
-                old_sid,
+                parts.get(parts.len() - 2).unwrap_or(&""),
                 new_sid
             );
 
             user.name = new_name;
             user.uuid = new_uuid.clone();
         }
-    }
 
     if !found {
         return Err(anyhow!("User not found: {}", email));
@@ -220,11 +268,10 @@ pub fn list(paths: &Paths, filter: Option<String>) -> Result<()> {
 
     if let Some(inbound) = config.inbounds.first() {
         for user in &inbound.users {
-            if let Some(f) = &filter {
-                if !user.name.contains(f) {
+            if let Some(f) = &filter
+                && !user.name.contains(f) {
                     continue;
                 }
-            }
             println!("{}\t{}\t{}", user.name, user.uuid, user.flow);
         }
     }
@@ -235,8 +282,8 @@ pub fn info(paths: &Paths, email: String) -> Result<()> {
     let input_path = paths.get_input_config_path();
     let config = load_config(input_path)?;
 
-    if let Some(inbound) = config.inbounds.first() {
-        if let Some(user) = inbound
+    if let Some(inbound) = config.inbounds.first()
+        && let Some(user) = inbound
             .users
             .iter()
             .find(|u| u.name.starts_with(&format!("{}:", email)))
@@ -244,6 +291,5 @@ pub fn info(paths: &Paths, email: String) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(user)?);
             return Ok(());
         }
-    }
     Err(anyhow!("User not found: {}", email))
 }

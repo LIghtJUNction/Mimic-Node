@@ -80,20 +80,19 @@ pub async fn sni(
                 .args(["check", "reality-dest", &format!("{}:443", cand)])
                 .output();
 
-            if let Ok(output) = sing_box_check {
-                if output.status.success() {
+            if let Ok(output) = sing_box_check
+                && output.status.success() {
                     eprintln!("\n{} Found perfect match: {}", "[INFO]".green(), cand);
                     found_perfect = Some(cand);
                     break;
                 }
-            }
 
             // 3. Fallback H2 check
             // Since we configured client with http2_prior_knowledge/support, we can check version?
             // Actually, for a real H2 check on HTTPS, we need ALPN. reqwest supports it by default.
-            if best_fallback.is_none() {
-                if let Ok(response) = resp {
-                    if response.version() == reqwest::Version::HTTP_2 {
+            if best_fallback.is_none()
+                && let Ok(response) = resp
+                    && response.version() == reqwest::Version::HTTP_2 {
                         best_fallback = Some(cand.clone());
                         // If no sing-box available, stop here
                         if Command::new("sing-box").arg("version").output().is_err() {
@@ -106,8 +105,6 @@ pub async fn sni(
                             break;
                         }
                     }
-                }
-            }
         }
         eprintln!(); // Newline after dots
 
@@ -129,14 +126,13 @@ pub async fn sni(
     let input_path = paths.get_input_config_path();
     let mut config = load_config(input_path)?;
 
-    if let Some(inbound) = config.inbounds.first_mut() {
-        if let Some(tls) = inbound.tls.as_mut() {
+    if let Some(inbound) = config.inbounds.first_mut()
+        && let Some(tls) = inbound.tls.as_mut() {
             tls.server_name = sni_to_set.clone();
             if let Some(reality) = tls.reality.as_mut() {
                 reality.handshake.server = sni_to_set.clone();
             }
         }
-    }
 
     save_config(&paths.staging, &config)?;
     eprintln!(
@@ -198,20 +194,16 @@ pub async fn link(
             .timeout(Duration::from_secs(3))
             .build()?;
 
-        if detect_v4 {
-            if let Ok(ip) = client.get("https://api.ipify.org").send().await {
-                if let Ok(text) = ip.text().await {
+        if detect_v4
+            && let Ok(ip) = client.get("https://api.ipify.org").send().await
+                && let Ok(text) = ip.text().await {
                     addresses.push(text);
                 }
-            }
-        }
-        if detect_v6 {
-            if let Ok(ip) = client.get("https://api6.ipify.org").send().await {
-                if let Ok(text) = ip.text().await {
+        if detect_v6
+            && let Ok(ip) = client.get("https://api6.ipify.org").send().await
+                && let Ok(text) = ip.text().await {
                     addresses.push(text);
                 }
-            }
-        }
         if addresses.is_empty() {
             eprintln!(
                 "{} Could not detect public IP. Using placeholder.",
@@ -249,7 +241,6 @@ use clap_complete::{
     generate_to,
     shells::{Bash, Elvish, Fish, PowerShell, Zsh},
 };
-use std::io::Write;
 
 #[cfg(feature = "completions")]
 pub fn completions(shell: Option<String>, apply: bool) -> Result<()> {

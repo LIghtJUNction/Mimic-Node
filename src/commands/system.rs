@@ -136,13 +136,12 @@ pub fn reset(paths: &Paths, keep_users_emails: Vec<String>) -> Result<()> {
                 // Add to new config
                 if let Some(inbound) = new_config.inbounds.first_mut() {
                     inbound.users.push(user.clone());
-                    if let Some(tls) = inbound.tls.as_mut() {
-                        if let Some(reality) = tls.reality.as_mut() {
+                    if let Some(tls) = inbound.tls.as_mut()
+                        && let Some(reality) = tls.reality.as_mut() {
                             reality.short_id.push(sid);
                             reality.short_id.sort();
                             reality.short_id.dedup();
                         }
-                    }
                 }
             } else {
                 eprintln!(

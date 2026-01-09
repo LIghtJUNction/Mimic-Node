@@ -67,8 +67,7 @@ pub fn generate_keypair() -> Result<(String, String)> {
     if let Ok(output) = Command::new("sing-box")
         .args(["generate", "reality-keypair"])
         .output()
-    {
-        if output.status.success() {
+        && output.status.success() {
             let out_str = String::from_utf8(output.stdout)?;
             // Output format:
             // PrivateKey: ...
@@ -87,7 +86,6 @@ pub fn generate_keypair() -> Result<(String, String)> {
                 return Ok((priv_key, pub_key));
             }
         }
-    }
 
     // Fallback: openssl (Warning)
     eprintln!(
