@@ -58,8 +58,6 @@ paru -S mimic-node-git
 
 </details>
 
-
-
 ## 快速开始
 
 <details>
@@ -74,6 +72,8 @@ sudo systemctl enable --now mimic-node-mount.service
 # 2. 生成 Reality 密钥对并自动探测最佳 SNI
 sudo mimictl gen-keys
 sudo mimictl sni
+# 如果实在是无法联网，很有可能是sni配置错误，sni需要是国外网站，但是国内也能访问，比如微软的域名.
+# mimictl sni url 应用自定义的sni
 
 # 3. 添加第一个用户
 sudo mimictl add my_email@example.com
@@ -126,7 +126,7 @@ sudo mimictl add alice@example.com
 sudo mimictl del alice@example.com
 
 # 重置用户的 UUID 和 ShortID (当用户被封锁时)
-sudo mimictl reset alice@example.com
+sudo mimictl reset-user alice@example.com
 
 # 列出所有用户
 sudo mimictl list
@@ -168,6 +168,10 @@ sudo mimictl show
 
 # 自定义config.json更新后的动作 (默认是检查)
 systemctl edit mimic-node-deploy.service
+# 你会看到一堆systemd自动生成的注释，按注释的说明来修改，这个服务将在config.json发生变化时执行
+
+# 命令补全
+mimictl completions -s fish -a # 为fish生成补全并立即应用
 
 ```
 
