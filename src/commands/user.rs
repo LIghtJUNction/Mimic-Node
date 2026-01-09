@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use colored::*;
 use regex::Regex;
 use std::fs;
@@ -8,6 +8,37 @@ use crate::paths::Paths;
 use crate::utils::{generate_keypair, generate_sid, generate_uuid, load_config, save_config};
 
 const FLOW_TYPE: &str = "xtls-rprx-vision";
+
+/// Helper to synchronize reality.short_id list with active users
+fn sync_short_ids(config: &mut config::SingBoxConfig) {
+    if let Some(inbound) = config.inbounds.first_mut() {
+        let mut active_sids = Vec::new();
+
+        // Extract SIDs from all users
+        for user in &inbound.users {
+            let parts: Vec<&str> = user.name.split(':').collect();
+            // Format is email:sid:level. We need the SID (second to last)
+            if parts.len() >= 3 {
+                if let Some(sid) = parts.get(parts.len() - 2) {
+                    if !sid.is_empty() {
+                        active_sids.push(sid.to_string());
+                    }
+                }
+            }
+        }
+
+        // Sort and dedup
+        active_sids.sort();
+        active_sids.dedup();
+
+        // Update config
+        if let Some(tls) = inbound.tls.as_mut() {
+            if let Some(reality) = tls.reality.as_mut() {
+                reality.short_id = active_sids;
+            }
+        }
+    }
+}
 
 pub fn add(paths: &Paths, emails: Vec<String>, level: u32) -> Result<()> {
     // Check for private key first
@@ -32,13 +63,10 @@ pub fn add(paths: &Paths, emails: Vec<String>, level: u32) -> Result<()> {
         let (priv_key, pub_key) = generate_keypair()?;
         if let Some(inbound) = config.inbounds.first_mut() {
             if inbound.tls.is_none() {
-                // Initialize structure if completely missing (unlikely given default)
-                // Keeping it simple: assuming structure exists from default config
                 return Err(anyhow!("Config structure invalid: missing tls"));
             }
             if let Some(tls) = inbound.tls.as_mut() {
                 if tls.reality.is_none() {
-                    // Init reality...
                     return Err(anyhow!("Config structure invalid: missing reality"));
                 }
                 if let Some(reality) = tls.reality.as_mut() {
@@ -63,14 +91,6 @@ pub fn add(paths: &Paths, emails: Vec<String>, level: u32) -> Result<()> {
 
         if let Some(inbound) = config.inbounds.first_mut() {
             inbound.users.push(user);
-            if let Some(tls) = inbound.tls.as_mut() {
-                if let Some(reality) = tls.reality.as_mut() {
-                    reality.short_id.push(sid.clone());
-                    // Deduplicate short_ids (simple approach)
-                    reality.short_id.sort();
-                    reality.short_id.dedup();
-                }
-            }
         }
 
         eprintln!(
@@ -81,6 +101,9 @@ pub fn add(paths: &Paths, emails: Vec<String>, level: u32) -> Result<()> {
         );
         println!("uuid: {}\nsid: {}", uuid, sid);
     }
+
+    // Sync SIDs
+    sync_short_ids(&mut config);
 
     save_config(&paths.staging, &config)?;
 
@@ -115,6 +138,9 @@ pub fn del(paths: &Paths, targets: Vec<String>) -> Result<()> {
 
         eprintln!("{} Processed deletion for: {}", "[INFO]".green(), target);
     }
+
+    // Sync SIDs
+    sync_short_ids(&mut config);
 
     save_config(&paths.staging, &config)?;
 
@@ -167,23 +193,14 @@ pub fn reset(paths: &Paths, email: String) -> Result<()> {
             user.name = new_name;
             user.uuid = new_uuid.clone();
         }
-
-        if found {
-            // Update short_id list
-            if let Some(tls) = inbound.tls.as_mut() {
-                if let Some(reality) = tls.reality.as_mut() {
-                    if let Some(pos) = reality.short_id.iter().position(|x| x == &old_sid) {
-                        reality.short_id.remove(pos);
-                    }
-                    reality.short_id.push(new_sid.clone());
-                }
-            }
-        }
     }
 
     if !found {
         return Err(anyhow!("User not found: {}", email));
     }
+
+    // Sync SIDs
+    sync_short_ids(&mut config);
 
     save_config(&paths.staging, &config)?;
     println!("uuid: {}\nsid: {}", new_uuid, new_sid);

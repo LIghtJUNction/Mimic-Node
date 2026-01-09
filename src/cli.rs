@@ -115,4 +115,7 @@ pub enum Commands {
 
     /// Check system status (service, mounts, config)
     Check,
+
+    /// Verify configuration integrity (keys, sids, uuids)
+    Verify,
 }

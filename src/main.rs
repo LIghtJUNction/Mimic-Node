@@ -38,6 +38,7 @@ async fn main() -> Result<()> {
         Commands::Show => commands::system::show(&paths)?,
         Commands::Apply => commands::system::apply(&paths)?,
         Commands::Check => commands::system::check(&paths)?,
+        Commands::Verify => commands::verify::verify(&paths)?,
     }
 
     Ok(())
