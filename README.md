@@ -70,7 +70,7 @@ paru -S mimic-node-git
 ```bash
 # 1. 启用配置覆盖层 (至关重要！否则修改无法保存)
 sudo systemctl enable --now mimic-node-mount.service
-
+# 如果报错，最终解决方法是删除/var/lib/mimic-node文件夹，使用mimicctl reset命令重置为默认配置
 # 2. 生成 Reality 密钥对并自动探测最佳 SNI
 sudo mimictl gen-keys
 sudo mimictl sni
