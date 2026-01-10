@@ -148,6 +148,12 @@ pub enum Commands {
         /// Prefer IPv6 for auto-detection
         #[arg(short = '6', long = "v6")]
         v6: bool,
+
+        /// Network interface to use for auto-detection (e.g. 'eth0')
+        /// When provided, mimictl will attempt to use addresses assigned to this
+        /// interface for link generation instead of relying on external IP services.
+        #[arg(short = 'i', long = "interface", value_name = "IFACE")]
+        interface: Option<String>,
     },
 
     /// List users

@@ -195,6 +195,7 @@ pub async fn link(
     mut addresses: Vec<String>,
     v4: bool,
     v6: bool,
+    interface: Option<String>,
 ) -> Result<()> {
     let input_path = paths.get_input_config_path();
     let config = load_config(input_path)?;
@@ -251,36 +252,75 @@ pub async fn link(
             detect_v6 = true;
         }
 
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(3))
-            .build()?;
+        // If user specified an interface, prefer addresses from that interface
+        if let Some(iface_name) = interface.as_ref() {
+            if let Ok(ifaces) = get_if_addrs() {
+                let iface_ips: Vec<std::net::IpAddr> = ifaces
+                    .into_iter()
+                    .filter(|ifa| ifa.name == *iface_name)
+                    .map(|ifa| ifa.addr.ip())
+                    .collect();
 
-        // IPv4 public detection via api.ipify.org
-        if detect_v4
-            && let Ok(ip) = client.get("https://api.ipify.org").send().await
-            && let Ok(text) = ip.text().await
-        {
-            addresses.push(text);
-        }
+                if iface_ips.is_empty() {
+                    return Err(anyhow!("No addresses found on interface: {}", iface_name));
+                }
 
-        // IPv6 public detection via api6.ipify.org
-        if detect_v6 {
-            if let Ok(ip) = client.get("https://api6.ipify.org").send().await
+                // prefer IPv6 if requested
+                if detect_v6 {
+                    if let Some(v6) = choose_ipv6_candidate(iface_ips.clone().into_iter()) {
+                        addresses.push(v6.to_string());
+                    } else if let Some(v4) = iface_ips.iter().find_map(|ip| match ip {
+                        std::net::IpAddr::V4(v4) => Some(*v4),
+                        _ => None,
+                    }) {
+                        addresses.push(v4.to_string());
+                    }
+                } else {
+                    // prefer IPv4
+                    if let Some(v4) = iface_ips.iter().find_map(|ip| match ip {
+                        std::net::IpAddr::V4(v4) => Some(*v4),
+                        _ => None,
+                    }) {
+                        addresses.push(v4.to_string());
+                    } else if let Some(v6) = choose_ipv6_candidate(iface_ips.into_iter()) {
+                        addresses.push(v6.to_string());
+                    }
+                }
+            } else {
+                return Err(anyhow!("Failed to enumerate network interfaces"));
+            }
+        } else {
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(3))
+                .build()?;
+
+            // IPv4 public detection via api.ipify.org
+            if detect_v4
+                && let Ok(ip) = client.get("https://api.ipify.org").send().await
                 && let Ok(text) = ip.text().await
             {
                 addresses.push(text);
-            } else {
-                // Fallback: try to detect a local IPv6 address from system interfaces.
-                // This picks a global unicast if available; otherwise a unique-local (ULA).
-                if let Ok(ifaces) = get_if_addrs() {
-                    let ips_iter = ifaces.into_iter().map(|ifa| ifa.addr.ip());
-                    if let Some(v6) = choose_ipv6_candidate(ips_iter) {
-                        eprintln!(
-                            "{} Auto-detected local IPv6 (fallback): {} (may not be reachable publicly)",
-                            "[WARN]".yellow(),
-                            v6
-                        );
-                        addresses.push(v6.to_string());
+            }
+
+            // IPv6 public detection via api6.ipify.org
+            if detect_v6 {
+                if let Ok(ip) = client.get("https://api6.ipify.org").send().await
+                    && let Ok(text) = ip.text().await
+                {
+                    addresses.push(text);
+                } else {
+                    // Fallback: try to detect a local IPv6 address from system interfaces.
+                    // This picks a global unicast if available; otherwise a unique-local (ULA).
+                    if let Ok(ifaces) = get_if_addrs() {
+                        let ips_iter = ifaces.into_iter().map(|ifa| ifa.addr.ip());
+                        if let Some(v6) = choose_ipv6_candidate(ips_iter) {
+                            eprintln!(
+                                "{} Auto-detected local IPv6 (fallback): {} (may not be reachable publicly)",
+                                "[WARN]".yellow(),
+                                v6
+                            );
+                            addresses.push(v6.to_string());
+                        }
                     }
                 }
             }
@@ -530,6 +570,7 @@ mod tests {
             vec!["1.2.3.4".to_string()],
             true,
             false,
+            None,
         )
         .await;
         assert!(
@@ -588,6 +629,7 @@ mod tests {
             vec!["1.2.3.4".to_string()],
             true,
             false,
+            None,
         )
         .await;
         assert!(res.is_err(), "link should return error for ambiguous match");
