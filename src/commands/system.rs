@@ -273,7 +273,9 @@ mod tests {
             "staging_pubkey should be removed"
         );
 
-        fs::remove_dir_all(tmp).unwrap();
+        if let Err(e) = fs::remove_dir_all(&tmp) {
+            eprintln!("[WARN] Failed to remove test directory {:?}: {}", tmp, e);
+        }
     }
 
     #[test]
@@ -284,7 +286,9 @@ mod tests {
         let res = discard(&paths, vec!["unknown".to_string()], true);
         assert!(res.is_err());
 
-        fs::remove_dir_all(tmp).unwrap();
+        if let Err(e) = fs::remove_dir_all(&tmp) {
+            eprintln!("[WARN] Failed to remove test directory {:?}: {}", tmp, e);
+        }
     }
 
     #[test]
@@ -295,7 +299,9 @@ mod tests {
         let res = discard(&paths, Vec::new(), true);
         assert!(res.is_ok());
 
-        fs::remove_dir_all(tmp).unwrap();
+        if let Err(e) = fs::remove_dir_all(&tmp) {
+            eprintln!("[WARN] Failed to remove test directory {:?}: {}", tmp, e);
+        }
     }
 
     #[test]
@@ -357,7 +363,9 @@ mod tests {
             }
         }
         drop(_guard);
-        fs::remove_dir_all(tmp).unwrap();
+        if let Err(e) = fs::remove_dir_all(&tmp) {
+            eprintln!("[WARN] Failed to remove test directory {:?}: {}", tmp, e);
+        }
     }
 
     #[test]
@@ -417,6 +425,8 @@ mod tests {
             }
         }
         drop(_guard);
-        fs::remove_dir_all(tmp).unwrap();
+        if let Err(e) = fs::remove_dir_all(&tmp) {
+            eprintln!("[WARN] Failed to remove test directory {:?}: {}", tmp, e);
+        }
     }
 }

@@ -861,7 +861,9 @@ mod tests {
         let staged = fs::read_to_string(&paths.staging).unwrap();
         assert!(staged.contains("bob@new.com:SID2:0"));
 
-        fs::remove_dir_all(dir).unwrap();
+        if let Err(e) = fs::remove_dir_all(&dir) {
+            eprintln!("[WARN] Failed to remove test directory {:?}: {}", dir, e);
+        }
     }
 
     #[test]
@@ -919,7 +921,9 @@ mod tests {
             "staging should not be created in dry-run"
         );
 
-        fs::remove_dir_all(dir).unwrap();
+        if let Err(e) = fs::remove_dir_all(&dir) {
+            eprintln!("[WARN] Failed to remove test directory {:?}: {}", dir, e);
+        }
     }
 
     // Test removed: this test invoked `apply()` which can trigger privileged systemctl calls.

@@ -478,7 +478,9 @@ mod tests {
             "link should succeed for exact local-part match"
         );
 
-        fs::remove_dir_all(dir).unwrap();
+        if let Err(e) = fs::remove_dir_all(&dir) {
+            eprintln!("[WARN] Failed to remove test directory {:?}: {}", dir, e);
+        }
     }
 
     #[tokio::test]
@@ -533,6 +535,8 @@ mod tests {
         let err_msg = format!("{:?}", res.err().unwrap());
         assert!(err_msg.contains("Ambiguous target") || err_msg.contains("matched multiple users"));
 
-        fs::remove_dir_all(dir).unwrap();
+        if let Err(e) = fs::remove_dir_all(&dir) {
+            eprintln!("[WARN] Failed to remove test directory {:?}: {}", dir, e);
+        }
     }
 }
