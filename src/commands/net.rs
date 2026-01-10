@@ -189,6 +189,50 @@ where
     ula
 }
 
+// Collect up to `max` IPv6 candidates from an iterator of IpAddrs.
+// Preference order: global unicast first, then unique-local (ULA).
+fn collect_ipv6_candidates<I>(ips: I, max: usize) -> Vec<std::net::Ipv6Addr>
+where
+    I: IntoIterator<Item = std::net::IpAddr>,
+{
+    let mut globals: Vec<std::net::Ipv6Addr> = Vec::new();
+    let mut ulas: Vec<std::net::Ipv6Addr> = Vec::new();
+
+    for ip in ips {
+        if let std::net::IpAddr::V6(v6) = ip {
+            if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
+                continue;
+            }
+            // Skip link-local
+            let first_hextet = v6.segments()[0];
+            if (first_hextet & 0xffc0) == 0xfe80 {
+                continue;
+            }
+            let first_byte = v6.octets()[0];
+            if first_byte == 0xfc || first_byte == 0xfd {
+                ulas.push(v6);
+            } else {
+                globals.push(v6);
+            }
+        }
+    }
+
+    let mut out: Vec<std::net::Ipv6Addr> = Vec::new();
+    for g in globals.into_iter() {
+        if out.len() >= max {
+            break;
+        }
+        out.push(g);
+    }
+    for u in ulas.into_iter() {
+        if out.len() >= max {
+            break;
+        }
+        out.push(u);
+    }
+    out
+}
+
 pub async fn link(
     paths: &Paths,
     email: String,
@@ -196,6 +240,7 @@ pub async fn link(
     v4: bool,
     v6: bool,
     interface: Option<String>,
+    num: usize,
 ) -> Result<()> {
     let input_path = paths.get_input_config_path();
     let config = load_config(input_path)?;
@@ -302,24 +347,40 @@ pub async fn link(
                 addresses.push(text);
             }
 
-            // IPv6 public detection via api6.ipify.org
+            // IPv6 public detection via api6.ipify.org (and local fallback/augmentation up to `num`)
             if detect_v6 {
-                if let Ok(ip) = client.get("https://api6.ipify.org").send().await
-                    && let Ok(text) = ip.text().await
+                // First try public detection
+                let mut added = std::collections::HashSet::<String>::new();
+                if let Ok(resp) = client.get("https://api6.ipify.org").send().await
+                    && let Ok(text) = resp.text().await
                 {
-                    addresses.push(text);
-                } else {
-                    // Fallback: try to detect a local IPv6 address from system interfaces.
-                    // This picks a global unicast if available; otherwise a unique-local (ULA).
+                    if !text.is_empty() {
+                        addresses.push(text.clone());
+                        added.insert(text);
+                    }
+                }
+
+                // If we still need additional addresses, enumerate local interfaces and collect candidates
+                if addresses.len() < num {
                     if let Ok(ifaces) = get_if_addrs() {
                         let ips_iter = ifaces.into_iter().map(|ifa| ifa.addr.ip());
-                        if let Some(v6) = choose_ipv6_candidate(ips_iter) {
+                        let candidates = collect_ipv6_candidates(ips_iter, num);
+                        for v6 in candidates {
+                            let s = v6.to_string();
+                            if !added.contains(&s) {
+                                addresses.push(s.clone());
+                                added.insert(s);
+                            }
+                            if addresses.len() >= num {
+                                break;
+                            }
+                        }
+                        if !addresses.is_empty() {
                             eprintln!(
-                                "{} Auto-detected local IPv6 (fallback): {} (may not be reachable publicly)",
+                                "{} Auto-detected IPv6 candidate(s): {:?}",
                                 "[WARN]".yellow(),
-                                v6
+                                addresses
                             );
-                            addresses.push(v6.to_string());
                         }
                     }
                 }
@@ -571,6 +632,7 @@ mod tests {
             true,
             false,
             None,
+            1,
         )
         .await;
         assert!(
@@ -630,6 +692,7 @@ mod tests {
             true,
             false,
             None,
+            1,
         )
         .await;
         assert!(res.is_err(), "link should return error for ambiguous match");
@@ -645,11 +708,33 @@ mod tests {
     fn test_choose_ipv6_candidate_prefers_global() {
         use std::net::IpAddr;
         let ips = vec![
-            IpAddr::V6("fe80::1".parse().unwrap()), // link-local (ignored)
-            IpAddr::V6("fc00::1".parse().unwrap()), // ULA (fallback)
-            IpAddr::V6("2001:db8::1".parse().unwrap()), // global (preferred)
+            IpAddr::V6("fe80::1".parse::<std::net::Ipv6Addr>().unwrap()), // link-local (ignored)
+            IpAddr::V6("fc00::1".parse::<std::net::Ipv6Addr>().unwrap()), // ULA (fallback)
+            IpAddr::V6("2001:db8::1".parse::<std::net::Ipv6Addr>().unwrap()), // global (preferred)
         ];
         let chosen = choose_ipv6_candidate(ips.into_iter());
-        assert_eq!(chosen, Some("2001:db8::1".parse().unwrap()));
+        assert_eq!(
+            chosen,
+            Some("2001:db8::1".parse::<std::net::Ipv6Addr>().unwrap())
+        );
+    }
+
+    #[test]
+    fn test_collect_ipv6_candidates_limits_and_order() {
+        use std::net::IpAddr;
+        let ips = vec![
+            IpAddr::V6("2001:db8::1".parse::<std::net::Ipv6Addr>().unwrap()),
+            IpAddr::V6("fc00::1".parse::<std::net::Ipv6Addr>().unwrap()),
+            IpAddr::V6("2001:db8::2".parse::<std::net::Ipv6Addr>().unwrap()),
+            IpAddr::V6("fe80::1".parse::<std::net::Ipv6Addr>().unwrap()), // link-local (ignored)
+        ];
+        let chosen = collect_ipv6_candidates(ips.into_iter(), 2);
+        assert_eq!(
+            chosen,
+            vec![
+                "2001:db8::1".parse::<std::net::Ipv6Addr>().unwrap(),
+                "2001:db8::2".parse::<std::net::Ipv6Addr>().unwrap()
+            ]
+        );
     }
 }

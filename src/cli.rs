@@ -154,6 +154,10 @@ pub enum Commands {
         /// interface for link generation instead of relying on external IP services.
         #[arg(short = 'i', long = "interface", value_name = "IFACE")]
         interface: Option<String>,
+
+        /// Number of addresses/links to generate when auto-detecting (default: 1)
+        #[arg(long = "num", value_name = "N", default_value = "1")]
+        num: usize,
     },
 
     /// List users
