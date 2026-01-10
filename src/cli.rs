@@ -160,9 +160,36 @@ pub enum Commands {
         #[arg(long = "assign")]
         assign: bool,
 
+        /// When enabled, attempt (experimental) IPv4 address assignment within the interface's IPv4 subnet.
+        /// Requires root and a suitable IPv4 subnet on the interface. Use with caution.
+        #[arg(long = "assign-v4")]
+        assign_v4: bool,
+
         /// Number of addresses/links to generate when auto-detecting (default: 1)
         #[arg(long = "num", value_name = "N", default_value = "1")]
         num: usize,
+    },
+
+    /// Generate sing-box client config(s) from VLESS link(s) read from stdin or provided via arguments.
+    ///
+    /// Example:
+    ///   mimictl link alice@example.com | mimictl from-link -o client.json --socks
+    FromLink {
+        /// Path to output file. If omitted, prints to stdout.
+        #[arg(short = 'o', long = "out", value_name = "FILE")]
+        out: Option<std::path::PathBuf>,
+
+        /// Add a local SOCKS5 inbound (default).
+        #[arg(short = 's', long = "socks")]
+        socks: bool,
+
+        /// Add a TUN inbound instead of SOCKS (mutually exclusive).
+        #[arg(short = 't', long = "tun")]
+        tun: bool,
+
+        /// Tag name for selector outbound when multiple links are present
+        #[arg(long = "selector-tag", default_value = "proxy")]
+        selector_tag: String,
     },
 
     /// List users

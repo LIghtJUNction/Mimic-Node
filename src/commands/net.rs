@@ -3,9 +3,13 @@ use colored::*;
 use if_addrs::get_if_addrs;
 
 use std::fs;
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, Read};
+use std::path::PathBuf;
 use std::process::Command;
 use tokio::time::Duration;
+
+use serde_json::{Value, json};
+use url::Url;
 
 use crate::paths::Paths;
 use crate::utils::{load_config, save_config};
@@ -243,6 +247,7 @@ pub async fn link(
     interface: Option<String>,
     num: usize,
     assign: bool,
+    assign_v4: bool,
 ) -> Result<()> {
     let input_path = paths.get_input_config_path();
     let config = load_config(input_path)?;
@@ -362,126 +367,313 @@ pub async fn link(
                     );
                 }
 
-                // Use `ip -6 -o addr show dev <iface>` to find a global IPv6 and its prefix length.
+                // Attempt IPv6 auto-assignment (best-effort). On any failure we WARN and continue
                 let out = Command::new("ip")
                     .args(["-6", "-o", "addr", "show", "dev", iface_name])
-                    .output()
-                    .map_err(|e| anyhow!("Failed to run 'ip' to inspect interface: {}", e))?;
-
-                if !out.status.success() {
-                    return Err(anyhow!(
-                        "'ip' returned non-zero when inspecting interface {}",
-                        iface_name
-                    ));
-                }
-
-                let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-                // Find first token like 2605:.../64
-                let mut found_prefix: Option<(std::net::Ipv6Addr, usize)> = None;
-                for line in stdout.lines() {
-                    for token in line.split_whitespace() {
-                        if token.contains(':') && token.contains('/') {
-                            if let Some((addr_str, plen_str)) = token.split_once('/') {
-                                if let Ok(plen) = plen_str.parse::<usize>() {
-                                    if let Ok(ipv6) = addr_str.parse::<std::net::Ipv6Addr>() {
-                                        found_prefix = Some((ipv6, plen));
-                                        break;
+                    .output();
+                if let Err(e) = out {
+                    eprintln!(
+                        "{} Failed to run 'ip' to inspect interface {} for IPv6: {}. Skipping IPv6 auto-assign.",
+                        "[WARN]".yellow(),
+                        iface_name,
+                        e
+                    );
+                } else {
+                    let out = out.unwrap();
+                    if !out.status.success() {
+                        eprintln!(
+                            "{} 'ip' returned non-zero when inspecting interface {} for IPv6. Skipping IPv6 auto-assign.",
+                            "[WARN]".yellow(),
+                            iface_name
+                        );
+                    } else {
+                        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                        // Find first token like 2605:.../64
+                        let mut found_prefix: Option<(std::net::Ipv6Addr, usize)> = None;
+                        for line in stdout.lines() {
+                            for token in line.split_whitespace() {
+                                if token.contains(':') && token.contains('/') {
+                                    if let Some((addr_str, plen_str)) = token.split_once('/') {
+                                        if let Ok(plen) = plen_str.parse::<usize>() {
+                                            if let Ok(ipv6) = addr_str.parse::<std::net::Ipv6Addr>()
+                                            {
+                                                found_prefix = Some((ipv6, plen));
+                                                break;
+                                            }
+                                        }
                                     }
                                 }
                             }
+                            if found_prefix.is_some() {
+                                break;
+                            }
+                        }
+
+                        if let Some((base_ip, prefix_len)) = found_prefix {
+                            if prefix_len % 16 != 0 {
+                                eprintln!(
+                                    "{} Unsupported IPv6 prefix length {} on interface {}. Only prefixes divisible by 16 are supported for automatic assignment. Skipping IPv6 auto-assign.",
+                                    "[WARN]".yellow(),
+                                    prefix_len,
+                                    iface_name
+                                );
+                            } else {
+                                let prefix_hextets = prefix_len / 16;
+                                let mut base_segs = base_ip.segments();
+                                for i in prefix_hextets..8 {
+                                    base_segs[i] = 0;
+                                }
+
+                                // Compute how many addresses still needed
+                                let mut need = if num > addresses.len() {
+                                    num - addresses.len()
+                                } else {
+                                    0
+                                };
+                                // RNG initialization not required; using rand::random() directly
+                                let mut seen = std::collections::HashSet::<String>::new();
+                                for a in &addresses {
+                                    seen.insert(a.clone());
+                                }
+
+                                let mut attempts = 0usize;
+                                while need > 0 && attempts < (need * 8 + 32) {
+                                    attempts += 1;
+                                    // Randomize last 64 bits (4 hextets)
+                                    let r1: u16 = rand::random::<u16>();
+                                    let r2: u16 = rand::random::<u16>();
+                                    let r3: u16 = rand::random::<u16>();
+                                    let r4: u16 = rand::random::<u16>();
+                                    let mut segs = base_segs;
+                                    // Fill tail of the address with random hextets starting at prefix boundary
+                                    let tail_index = prefix_hextets;
+                                    if tail_index <= 4 {
+                                        segs[tail_index + 0] = r1;
+                                        segs[tail_index + 1] = r2;
+                                        segs[tail_index + 2] = r3;
+                                        segs[tail_index + 3] = r4;
+                                    } else {
+                                        // fallback: put randomness into last 4 hextets
+                                        segs[4] = r1;
+                                        segs[5] = r2;
+                                        segs[6] = r3;
+                                        segs[7] = r4;
+                                    }
+                                    let candidate = std::net::Ipv6Addr::from(segs);
+                                    let s = candidate.to_string();
+                                    if seen.contains(&s) {
+                                        continue;
+                                    }
+
+                                    let assign_target = format!("{}/{}", s, prefix_len);
+                                    let status_res = Command::new("ip")
+                                        .args([
+                                            "-6",
+                                            "addr",
+                                            "add",
+                                            &assign_target,
+                                            "dev",
+                                            iface_name,
+                                        ])
+                                        .status();
+
+                                    match status_res {
+                                        Ok(status) if status.success() => {
+                                            eprintln!(
+                                                "{} Assigned IPv6 {} on {}",
+                                                "[INFO]".green(),
+                                                s,
+                                                iface_name
+                                            );
+                                            addresses.push(s.clone());
+                                            seen.insert(s);
+                                            need -= 1;
+                                        }
+                                        Ok(_) => {
+                                            eprintln!(
+                                                "{} 'ip addr add' returned non-zero for {} on {}. Continuing attempts.",
+                                                "[WARN]".yellow(),
+                                                assign_target,
+                                                iface_name
+                                            );
+                                        }
+                                        Err(e) => {
+                                            eprintln!(
+                                                "{} Failed to execute 'ip' for IPv6 assignment: {}. Continuing attempts.",
+                                                "[WARN]".yellow(),
+                                                e
+                                            );
+                                        }
+                                    }
+                                }
+
+                                if need > 0 {
+                                    eprintln!(
+                                        "{} Could not assign sufficient IPv6 addresses to reach requested --num on interface {} (got {}).",
+                                        "[WARN]".yellow(),
+                                        iface_name,
+                                        num - need
+                                    );
+                                }
+                            }
+                        } else {
+                            eprintln!(
+                                "{} No global IPv6 prefix found on interface {}; skipping IPv6 auto-assign.",
+                                "[WARN]".yellow(),
+                                iface_name
+                            );
                         }
                     }
-                    if found_prefix.is_some() {
-                        break;
-                    }
                 }
 
-                let (base_ip, prefix_len) = found_prefix.ok_or_else(|| {
-                    anyhow!("No global IPv6 prefix found on interface {}", iface_name)
-                })?;
-
-                if prefix_len % 16 != 0 {
-                    return Err(anyhow!(
-                        "Unsupported IPv6 prefix length {} on interface {}. Only prefixes divisible by 16 are supported for automatic assignment.",
-                        prefix_len,
-                        iface_name
-                    ));
-                }
-
-                let prefix_hextets = prefix_len / 16;
-                let mut base_segs = base_ip.segments();
-                for i in prefix_hextets..8 {
-                    base_segs[i] = 0;
-                }
-
-                // Compute how many addresses still needed
-                let mut need = if num > addresses.len() {
-                    num - addresses.len()
-                } else {
-                    0
-                };
-                // RNG initialization not required; using rand::random() directly
-                let mut seen = std::collections::HashSet::<String>::new();
-                for a in &addresses {
-                    seen.insert(a.clone());
-                }
-
-                let mut attempts = 0usize;
-                while need > 0 && attempts < (need * 8 + 32) {
-                    attempts += 1;
-                    // Randomize last 64 bits (4 hextets)
-                    let r1: u16 = rand::random::<u16>();
-                    let r2: u16 = rand::random::<u16>();
-                    let r3: u16 = rand::random::<u16>();
-                    let r4: u16 = rand::random::<u16>();
-                    let mut segs = base_segs;
-                    // Fill tail of the address with random hextets starting at prefix boundary
-                    let tail_index = prefix_hextets;
-                    if tail_index <= 4 {
-                        segs[tail_index + 0] = r1;
-                        segs[tail_index + 1] = r2;
-                        segs[tail_index + 2] = r3;
-                        segs[tail_index + 3] = r4;
+                // Experimental: Try IPv4 automatic assignment if requested (best-effort; WARN on failure)
+                if assign_v4 && addresses.len() < num {
+                    let out4_res = Command::new("ip")
+                        .args(["-4", "-o", "addr", "show", "dev", iface_name])
+                        .output();
+                    if let Err(e) = out4_res {
+                        eprintln!(
+                            "{} Failed to run 'ip' to inspect interface {} for IPv4: {}. Skipping IPv4 auto-assign.",
+                            "[WARN]".yellow(),
+                            iface_name,
+                            e
+                        );
                     } else {
-                        // fallback: put randomness into last 4 hextets
-                        segs[4] = r1;
-                        segs[5] = r2;
-                        segs[6] = r3;
-                        segs[7] = r4;
+                        let out4 = out4_res.unwrap();
+                        if !out4.status.success() {
+                            eprintln!(
+                                "{} 'ip' returned non-zero when inspecting interface {} for IPv4. Skipping IPv4 auto-assign.",
+                                "[WARN]".yellow(),
+                                iface_name
+                            );
+                        } else {
+                            let stdout4 = String::from_utf8_lossy(&out4.stdout).to_string();
+                            let mut found_v4_prefix: Option<(std::net::Ipv4Addr, usize)> = None;
+                            for line in stdout4.lines() {
+                                for token in line.split_whitespace() {
+                                    if token.contains('.') && token.contains('/') {
+                                        if let Some((addr_str, plen_str)) = token.split_once('/') {
+                                            if let Ok(plen) = plen_str.parse::<usize>() {
+                                                if let Ok(ipv4) =
+                                                    addr_str.parse::<std::net::Ipv4Addr>()
+                                                {
+                                                    found_v4_prefix = Some((ipv4, plen));
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if found_v4_prefix.is_some() {
+                                    break;
+                                }
+                            }
+                            if let Some((base4, plen4)) = found_v4_prefix {
+                                if plen4 >= 31 {
+                                    eprintln!(
+                                        "{} IPv4 prefix too small /{} on interface {}; skipping IPv4 auto-assign.",
+                                        "[WARN]".yellow(),
+                                        plen4,
+                                        iface_name
+                                    );
+                                } else {
+                                    let octs = base4.octets();
+                                    let base_int = ((octs[0] as u32) << 24)
+                                        | ((octs[1] as u32) << 16)
+                                        | ((octs[2] as u32) << 8)
+                                        | (octs[3] as u32);
+                                    let host_bits = 32 - plen4;
+                                    let mut seen4 = std::collections::HashSet::<u32>::new();
+                                    for a in &addresses {
+                                        if let Ok(ip) = a.parse::<std::net::Ipv4Addr>() {
+                                            let o = ip.octets();
+                                            let v = ((o[0] as u32) << 24)
+                                                | ((o[1] as u32) << 16)
+                                                | ((o[2] as u32) << 8)
+                                                | (o[3] as u32);
+                                            seen4.insert(v);
+                                        }
+                                    }
+                                    let mut need4 = num - addresses.len();
+                                    let mut attempts4 = 0usize;
+                                    while need4 > 0 && attempts4 < (need4 * 8 + 32) {
+                                        attempts4 += 1;
+                                        let rand_host =
+                                            (rand::random::<u32>() % (1u32 << host_bits)) as u32;
+                                        // avoid network and broadcast host values
+                                        if rand_host == 0 || rand_host == ((1u32 << host_bits) - 1)
+                                        {
+                                            continue;
+                                        }
+                                        let candidate_int =
+                                            (base_int & (!0u32 << host_bits)) | rand_host;
+                                        if seen4.contains(&candidate_int) {
+                                            continue;
+                                        }
+                                        let cand_oct = [
+                                            ((candidate_int >> 24) & 0xff) as u8,
+                                            ((candidate_int >> 16) & 0xff) as u8,
+                                            ((candidate_int >> 8) & 0xff) as u8,
+                                            (candidate_int & 0xff) as u8,
+                                        ];
+                                        let cand_ip = std::net::Ipv4Addr::from(cand_oct);
+                                        let assign_target = format!("{}/{}", cand_ip, plen4);
+                                        let status_res = Command::new("ip")
+                                            .args([
+                                                "addr",
+                                                "add",
+                                                &assign_target,
+                                                "dev",
+                                                iface_name,
+                                            ])
+                                            .status();
+                                        match status_res {
+                                            Ok(status) if status.success() => {
+                                                eprintln!(
+                                                    "{} Assigned IPv4 {} on {}",
+                                                    "[INFO]".green(),
+                                                    cand_ip,
+                                                    iface_name
+                                                );
+                                                addresses.push(cand_ip.to_string());
+                                                seen4.insert(candidate_int);
+                                                need4 -= 1;
+                                            }
+                                            Ok(_) => {
+                                                eprintln!(
+                                                    "{} 'ip addr add' returned non-zero for {} on {}. Continuing attempts.",
+                                                    "[WARN]".yellow(),
+                                                    assign_target,
+                                                    iface_name
+                                                );
+                                            }
+                                            Err(e) => {
+                                                eprintln!(
+                                                    "{} Failed to execute 'ip' for IPv4 assignment: {}. Continuing attempts.",
+                                                    "[WARN]".yellow(),
+                                                    e
+                                                );
+                                            }
+                                        }
+                                    }
+                                    if need4 > 0 {
+                                        eprintln!(
+                                            "{} Could not assign sufficient IPv4 addresses to reach requested --num on interface {} (got {}).",
+                                            "[WARN]".yellow(),
+                                            iface_name,
+                                            num - need4
+                                        );
+                                    }
+                                }
+                            } else {
+                                eprintln!(
+                                    "{} No IPv4 prefix found on interface {}; skipping IPv4 auto-assign.",
+                                    "[WARN]".yellow(),
+                                    iface_name
+                                );
+                            }
+                        }
                     }
-                    let candidate = std::net::Ipv6Addr::from(segs);
-                    let s = candidate.to_string();
-                    if seen.contains(&s) {
-                        continue;
-                    }
-
-                    let assign_target = format!("{}/{}", s, prefix_len);
-                    let status = Command::new("ip")
-                        .args(["-6", "addr", "add", &assign_target, "dev", iface_name])
-                        .status()
-                        .map_err(|e| {
-                            anyhow!("Failed to execute 'ip' for address assignment: {}", e)
-                        })?;
-
-                    if !status.success() {
-                        return Err(anyhow!(
-                            "Failed to assign generated IPv6 address {} on {}. Are you root and is the prefix delegated?",
-                            s,
-                            iface_name
-                        ));
-                    }
-
-                    eprintln!("{} Assigned IPv6 {} on {}", "[INFO]".green(), s, iface_name);
-                    addresses.push(s.clone());
-                    seen.insert(s);
-                    need -= 1;
-                }
-
-                if need > 0 {
-                    return Err(anyhow!(
-                        "Could not assign sufficient IPv6 addresses to reach requested --num on interface {}",
-                        iface_name
-                    ));
                 }
             }
         } else {
@@ -574,6 +766,266 @@ fn sid_label(sid: &str) -> String {
     sid.get(0..4)
         .map(|s| s.to_string())
         .unwrap_or_else(|| sid.to_string())
+}
+
+/// Collect VLESS links from various input formats (JSON array, newline separated, or single link)
+fn collect_links_from_input(input: &str) -> Result<Vec<String>> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Try JSON first
+    if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
+        if let Some(arr) = v.as_array() {
+            let mut out = Vec::new();
+            for item in arr {
+                if let Some(s) = item.as_str() {
+                    out.push(s.to_string());
+                }
+            }
+            if !out.is_empty() {
+                return Ok(out);
+            }
+        } else if let Some(s) = v.as_str() {
+            return Ok(vec![s.to_string()]);
+        }
+    }
+
+    let mut out = Vec::new();
+    for line in trimmed.lines() {
+        let l = line.trim();
+        if l.is_empty() || l.starts_with('#') {
+            continue;
+        }
+        // try parse small JSON fragments like ["..."] or "..."
+        if (l.starts_with('[') || l.starts_with('"')) {
+            if let Ok(v2) = serde_json::from_str::<Value>(l) {
+                if let Some(s) = v2.as_str() {
+                    out.push(s.to_string());
+                    continue;
+                } else if let Some(arr) = v2.as_array() {
+                    for item in arr {
+                        if let Some(s) = item.as_str() {
+                            out.push(s.to_string());
+                        }
+                    }
+                    continue;
+                }
+            }
+        }
+
+        // tokenise whitespace, pick tokens that look like vless links
+        for tok in l.split_whitespace() {
+            if tok.starts_with("vless://") {
+                out.push(tok.to_string());
+            }
+        }
+
+        // fallback: if the whole line is a link
+        if l.starts_with("vless://") && !out.contains(&l.to_string()) {
+            out.push(l.to_string());
+        }
+    }
+
+    Ok(out)
+}
+
+fn parse_link_to_outbound(
+    link: &str,
+    _idx: usize,
+    packet_encoding: &str,
+) -> Result<(String, Value)> {
+    let url = Url::parse(link).map_err(|e| anyhow!("Failed to parse link '{}': {}", link, e))?;
+
+    if url.scheme() != "vless" {
+        return Err(anyhow!(
+            "Invalid scheme '{}' in link '{}'",
+            url.scheme(),
+            link
+        ));
+    }
+
+    let uuid = url.username().to_string();
+    if uuid.is_empty() {
+        return Err(anyhow!("Link is missing UUID"));
+    }
+
+    let host = {
+        let h = url
+            .host_str()
+            .ok_or_else(|| anyhow!("Link missing host: {}", link))?
+            .to_string();
+        // Strip surrounding IPv6 brackets if present, e.g. "[2001:db8::1]" => "2001:db8::1"
+        if let Some(stripped) = h.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            stripped.to_string()
+        } else {
+            h
+        }
+    };
+
+    let port = url.port().unwrap_or(443);
+
+    let query_pairs: std::collections::HashMap<_, _> = url.query_pairs().collect();
+
+    let pbk = query_pairs
+        .get("pbk")
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow!("Link missing 'pbk' parameter (Reality public key)"))?;
+
+    let sni = query_pairs
+        .get("sni")
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow!("Link missing 'sni' parameter"))?;
+
+    let sid = query_pairs
+        .get("sid")
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow!("Link missing 'sid' parameter"))?;
+
+    let flow = query_pairs
+        .get("flow")
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "xtls-rprx-vision".to_string());
+
+    let fp = query_pairs
+        .get("fp")
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "chrome".to_string());
+
+    let tag = url
+        .fragment()
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| sid_label(&sid));
+
+    let tls = json!({
+        "enabled": true,
+        "server_name": sni,
+        "utls": {
+            "enabled": true,
+            "fingerprint": fp
+        },
+        "reality": {
+            "enabled": true,
+            "public_key": pbk,
+            "short_id": sid
+        }
+    });
+
+    let outbound = json!({
+        "type": "vless",
+        "tag": tag,
+        "server": host,
+        "server_port": port,
+        "uuid": uuid,
+        "flow": flow,
+        "tls": tls,
+        "packet_encoding": packet_encoding
+    });
+
+    Ok((tag, outbound))
+}
+
+pub async fn from_link(
+    _paths: &Paths,
+    out: Option<PathBuf>,
+    socks: bool,
+    tun: bool,
+    selector_tag: String,
+) -> Result<()> {
+    // Read stdin
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input)?;
+
+    let links = collect_links_from_input(&input)?;
+    if links.is_empty() {
+        return Err(anyhow!("No VLESS links found on stdin"));
+    }
+
+    let packet_encoding = "xudp";
+
+    let mut outbounds: Vec<Value> = Vec::new();
+    let mut tags: Vec<String> = Vec::new();
+
+    for (i, link) in links.iter().enumerate() {
+        let (tag, outbound) = parse_link_to_outbound(link, i, packet_encoding)?;
+        tags.push(tag.clone());
+        outbounds.push(outbound);
+    }
+
+    // Build base config
+    let mut map = serde_json::Map::new();
+    map.insert("log".to_string(), json!({"level":"info","timestamp": true}));
+    map.insert(
+        "dns".to_string(),
+        json!({
+            "servers": [{"tag":"dns","type":"udp","server":"1.1.1.1"}],
+            "final": "dns",
+            "strategy": "prefer_ipv4"
+        }),
+    );
+
+    // inbounds: choose TUN or SOCKS
+    if tun {
+        map.insert(
+            "inbounds".to_string(),
+            json!([{
+                "type": "tun",
+                "tag": "tun-in",
+                "mtu": 1400,
+                "address": ["172.16.0.1/30", "fd00::1/126"],
+                "auto_route": true,
+                "strict_route": true,
+                "stack": "mixed",
+                "sniff": true,
+                "sniff_override_destination": true
+            }]),
+        );
+    } else {
+        let socks_enabled = socks || !tun; // default to socks if neither specified
+        if socks_enabled {
+            map.insert(
+                "inbounds".to_string(),
+                json!([{
+                    "type": "socks",
+                    "tag": "socks-in",
+                    "listen": "127.0.0.1",
+                    "listen_port": 1080
+                }]),
+            );
+        }
+    }
+
+    // outbounds: add basic direct/block then our vless entries
+    let mut final_outbounds = vec![
+        json!({"type":"direct","tag":"direct"}),
+        json!({"type":"block","tag":"block"}),
+    ];
+    final_outbounds.extend(outbounds.into_iter());
+
+    if tags.len() > 1 {
+        final_outbounds.push(json!({
+            "type": "selector",
+            "tag": selector_tag,
+            "outbounds": tags.clone()
+        }));
+        map.insert("outbounds".to_string(), json!(final_outbounds));
+        map.insert("route".to_string(), json!({"final": selector_tag}));
+    } else {
+        let final_tag = tags.get(0).unwrap().clone();
+        map.insert("outbounds".to_string(), json!(final_outbounds));
+        map.insert("route".to_string(), json!({"final": final_tag}));
+    }
+
+    let content = serde_json::to_string_pretty(&map)?;
+    if let Some(p) = out {
+        std::fs::write(p, content)?;
+    } else {
+        println!("{}", content);
+    }
+
+    Ok(())
 }
 
 // tests moved to end of file
@@ -724,8 +1176,84 @@ mod tests {
     }
 
     #[test]
+    fn test_collect_links_from_input_json_array() {
+        let input = r#"["vless://1111@1.2.3.4:443?security=reality&pbk=PBK&sni=example.com&sid=SID#label"]"#;
+        let links = collect_links_from_input(input).unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(
+            links[0],
+            "vless://1111@1.2.3.4:443?security=reality&pbk=PBK&sni=example.com&sid=SID#label"
+        );
+    }
+
+    #[test]
+    fn test_collect_links_from_input_newlines() {
+        let input = "vless://a@1.2.3.4:443?security=reality&pbk=PBK1&sni=one.com&sid=S1#one\nvless://b@2.2.2.2:443?security=reality&pbk=PBK2&sni=two.com&sid=S2#two\n";
+        let links = collect_links_from_input(input).unwrap();
+        assert_eq!(links.len(), 2);
+        assert!(links[0].starts_with("vless://a@1.2.3.4"));
+        assert!(links[1].starts_with("vless://b@2.2.2.2"));
+    }
+
+    #[test]
+    fn test_parse_link_to_outbound_basic() {
+        let link = "vless://11111111-2222-3333-4444-555555555555@1.2.3.4:443?security=reality&encryption=none&pbk=PBK123&fp=chrome&type=tcp&sni=learn.microsoft.com&sid=ABCD&flow=xtls-rprx-vision#abcd";
+        let (tag, outbound) = parse_link_to_outbound(link, 0, "xudp").unwrap();
+        assert_eq!(tag, "abcd");
+        assert_eq!(outbound["type"].as_str().unwrap(), "vless");
+        assert_eq!(outbound["server"].as_str().unwrap(), "1.2.3.4");
+        assert_eq!(outbound["server_port"].as_i64().unwrap(), 443);
+        assert_eq!(
+            outbound["uuid"].as_str().unwrap(),
+            "11111111-2222-3333-4444-555555555555"
+        );
+        assert_eq!(
+            outbound["tls"]["reality"]["public_key"].as_str().unwrap(),
+            "PBK123"
+        );
+        assert_eq!(
+            outbound["tls"]["reality"]["short_id"].as_str().unwrap(),
+            "ABCD"
+        );
+        assert_eq!(
+            outbound["tls"]["server_name"].as_str().unwrap(),
+            "learn.microsoft.com"
+        );
+        assert_eq!(outbound["packet_encoding"].as_str().unwrap(), "xudp");
+    }
+
+    #[test]
+    fn test_parse_link_to_outbound_missing_pbk() {
+        let link = "vless://uuid@1.2.3.4:443?security=reality&sni=example.com&sid=SID#lbl";
+        let res = parse_link_to_outbound(link, 0, "xudp");
+        assert!(res.is_err());
+        let err = res.err().unwrap().to_string();
+        assert!(err.contains("pbk"));
+    }
+
+    #[test]
     fn test_sid_label_shorter() {
         assert_eq!(sid_label("ab"), "ab");
+    }
+
+    #[test]
+    fn test_parse_link_ipv6_bracketed() {
+        let link = "vless://1111@[2001:db8::1]:443?security=reality&encryption=none&pbk=PBKIPv6&fp=chrome&type=tcp&sni=ipv6.example.com&sid=S6#ipv6";
+        let (tag, outbound) = parse_link_to_outbound(link, 0, "xudp").unwrap();
+        assert_eq!(tag, "ipv6");
+        assert_eq!(outbound["server"].as_str().unwrap(), "2001:db8::1");
+        assert_eq!(outbound["server_port"].as_i64().unwrap(), 443);
+    }
+
+    #[test]
+    fn test_parse_links_mixed_ipv4_ipv6() {
+        let input = "vless://u1@1.2.3.4:443?security=reality&pbk=PBK1&fp=chrome&type=tcp&sni=one.com&sid=S1#one\nvless://u2@[2001:db8::2]:443?security=reality&pbk=PBK2&fp=chrome&type=tcp&sni=two.com&sid=S2#two\n";
+        let links = collect_links_from_input(input).unwrap();
+        assert_eq!(links.len(), 2);
+        let (_, o1) = parse_link_to_outbound(&links[0], 0, "xudp").unwrap();
+        let (_, o2) = parse_link_to_outbound(&links[1], 1, "xudp").unwrap();
+        assert_eq!(o1["server"].as_str().unwrap(), "1.2.3.4");
+        assert_eq!(o2["server"].as_str().unwrap(), "2001:db8::2");
     }
 
     #[test]
@@ -783,6 +1311,7 @@ mod tests {
             false,
             None,
             1,
+            false,
             false,
         )
         .await;
@@ -844,6 +1373,7 @@ mod tests {
             false,
             None,
             1,
+            false,
             false,
         )
         .await;

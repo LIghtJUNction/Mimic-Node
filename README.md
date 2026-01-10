@@ -154,15 +154,41 @@ sudo mimictl list
 <details>
 <summary>客户端链接（展开查看）</summary>
 
-为用户生成 VLESS+Reality+Vision 订阅链接：
+为用户生成 VLESS+Reality+Vision 订阅链接，并可将这些链接转换为 sing-box 客户端配置。`mimictl link` 支持以下与 IP 探测/生成相关的选项（常见场景：一个 IPv4，很多 IPv6）：
+
+- `--v4`：仅尝试 IPv4 探测/使用（优先 IPv4）
+- `--v6`：仅尝试 IPv6 探测/使用（优先 IPv6）
+- `--num N`：希望生成的地址数量（默认 1）
+- `--interface IFACE`：优先使用指定接口的地址或在该接口上分配地址
+- `--assign`：允许（IPv6）在接口前缀内自动分配 IPv6 地址（需要 root）
+- `--assign-v4`：实验性：允许在接口的 IPv4 子网内尝试自动分配 IPv4 地址（需要 root，谨慎使用）
+
+示例：
 
 ```bash
-# 自动探测服务器 IP 并生成链接
+# 默认：自动探测并生成一个地址（JSON 数组）
 mimictl link alice@example.com
 
-# 指定 IP 生成链接 (如果服务器在 NAT 后或使用 CDN)
+# 指定 IP 生成链接 (当服务器在 NAT 后或使用 CDN)
 mimictl link alice@example.com 1.2.3.4
+
+# 请求 5 个地址，优先 IPv6：若不足会尝试从接口枚举或分配 IPv6（需要 --interface + --assign）
+mimictl link alice@example.com --num 5 --v6 --interface eth0 --assign
+
+# 实验性：请求 3 个 IPv4（若接口可分配且为 root 会尝试分配）
+mimictl link alice@example.com --num 3 --v4 --interface eth0 --assign-v4
+
+# 混合常用场景（通常为 1 IPv4 + 多个 IPv6）
+mimictl link alice@example.com --num 6 --interface eth0 --assign
+
+# 将 link 输出直接转换成 sing-box 客户端配置
+mimictl link alice@example.com | mimictl from-link -o client.json
 ```
+
+行为说明（简化与鲁棒性）：
+- 针对常见场景（“一个 v4，超级多 v6”）：命令会尽量拿到 1 个 v4（公网检测或接口上已有），并使用 IPv6（公网/API、接口枚举或自动分配）填充到 `--num` 的数量。
+- 自动分配（IPv6、IPv4 实验性）均为**尽力而为**（best-effort），当无法探测或分配到足够的地址时，命令会输出 WARN 日志提示（例如找不到公网 IP，或分配失败），但不会因为找不到而直接中断（以便在尽可能多的场景下仍产出可用链接）。如果你需要更严格的行为（找不到即报错并中断），我可以再加一个严格模式开关。
+- IPv4 自动分配是实验性的：可能导致网络冲突或需要管理员策略，请在受控环境下使用并确认你有权限。
 
 </details>
 

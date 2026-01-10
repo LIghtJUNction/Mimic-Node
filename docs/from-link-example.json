@@ -1,0 +1,90 @@
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "tag": "dns",
+        "type": "udp",
+        "server": "1.1.1.1"
+      }
+    ],
+    "final": "dns",
+    "strategy": "prefer_ipv4"
+  },
+  "inbounds": [
+    {
+      "type": "socks",
+      "tag": "socks-in",
+      "listen": "127.0.0.1",
+      "listen_port": 1080
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    },
+    {
+      "type": "vless",
+      "tag": "one",
+      "server": "1.2.3.4",
+      "server_port": 443,
+      "uuid": "a",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "one.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "PBK1",
+          "short_id": "S1"
+        }
+      },
+      "packet_encoding": "xudp"
+    },
+    {
+      "type": "vless",
+      "tag": "two",
+      "server": "2.2.2.2",
+      "server_port": 443,
+      "uuid": "b",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "two.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "PBK2",
+          "short_id": "S2"
+        }
+      },
+      "packet_encoding": "xudp"
+    },
+    {
+      "type": "selector",
+      "tag": "proxy",
+      "outbounds": [
+        "one",
+        "two"
+      ]
+    }
+  ],
+  "route": {
+    "final": "proxy"
+  }
+}

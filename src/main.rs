@@ -73,8 +73,20 @@ async fn main() -> Result<()> {
             v6,
             interface,
             assign,
+            assign_v4,
             num,
-        } => commands::net::link(&paths, email, addresses, v4, v6, interface, num, assign).await?,
+        } => {
+            commands::net::link(
+                &paths, email, addresses, v4, v6, interface, num, assign, assign_v4,
+            )
+            .await?
+        }
+        Commands::FromLink {
+            out,
+            socks,
+            tun,
+            selector_tag,
+        } => commands::net::from_link(&paths, out, socks, tun, selector_tag).await?,
         Commands::List { filter, json } => commands::user::list(&paths, filter, json)?,
         Commands::Info { targets, json } => commands::user::info(&paths, targets, json)?,
         Commands::Show => commands::system::show(&paths)?,
