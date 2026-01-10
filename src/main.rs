@@ -74,10 +74,11 @@ async fn main() -> Result<()> {
             interface,
             assign,
             assign_v4,
+            strict,
             num,
         } => {
             commands::net::link(
-                &paths, email, addresses, v4, v6, interface, num, assign, assign_v4,
+                &paths, email, addresses, v4, v6, interface, num, assign, assign_v4, strict,
             )
             .await?
         }

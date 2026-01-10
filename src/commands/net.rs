@@ -248,6 +248,7 @@ pub async fn link(
     num: usize,
     assign: bool,
     assign_v4: bool,
+    strict: bool,
 ) -> Result<()> {
     let input_path = paths.get_input_config_path();
     let config = load_config(input_path)?;
@@ -372,20 +373,35 @@ pub async fn link(
                     .args(["-6", "-o", "addr", "show", "dev", iface_name])
                     .output();
                 if let Err(e) = out {
-                    eprintln!(
-                        "{} Failed to run 'ip' to inspect interface {} for IPv6: {}. Skipping IPv6 auto-assign.",
-                        "[WARN]".yellow(),
-                        iface_name,
-                        e
-                    );
+                    if strict {
+                        return Err(anyhow!(
+                            "Failed to run 'ip' to inspect interface {} for IPv6: {}",
+                            iface_name,
+                            e
+                        ));
+                    } else {
+                        eprintln!(
+                            "{} Failed to run 'ip' to inspect interface {} for IPv6: {}. Skipping IPv6 auto-assign.",
+                            "[WARN]".yellow(),
+                            iface_name,
+                            e
+                        );
+                    }
                 } else {
                     let out = out.unwrap();
                     if !out.status.success() {
-                        eprintln!(
-                            "{} 'ip' returned non-zero when inspecting interface {} for IPv6. Skipping IPv6 auto-assign.",
-                            "[WARN]".yellow(),
-                            iface_name
-                        );
+                        if strict {
+                            return Err(anyhow!(
+                                "'ip' returned non-zero when inspecting interface {} for IPv6",
+                                iface_name
+                            ));
+                        } else {
+                            eprintln!(
+                                "{} 'ip' returned non-zero when inspecting interface {} for IPv6. Skipping IPv6 auto-assign.",
+                                "[WARN]".yellow(),
+                                iface_name
+                            );
+                        }
                     } else {
                         let stdout = String::from_utf8_lossy(&out.stdout).to_string();
                         // Find first token like 2605:.../64
@@ -411,12 +427,20 @@ pub async fn link(
 
                         if let Some((base_ip, prefix_len)) = found_prefix {
                             if prefix_len % 16 != 0 {
-                                eprintln!(
-                                    "{} Unsupported IPv6 prefix length {} on interface {}. Only prefixes divisible by 16 are supported for automatic assignment. Skipping IPv6 auto-assign.",
-                                    "[WARN]".yellow(),
-                                    prefix_len,
-                                    iface_name
-                                );
+                                if strict {
+                                    return Err(anyhow!(
+                                        "Unsupported IPv6 prefix length {} on interface {}. Only prefixes divisible by 16 are supported for automatic assignment.",
+                                        prefix_len,
+                                        iface_name
+                                    ));
+                                } else {
+                                    eprintln!(
+                                        "{} Unsupported IPv6 prefix length {} on interface {}. Only prefixes divisible by 16 are supported for automatic assignment. Skipping IPv6 auto-assign.",
+                                        "[WARN]".yellow(),
+                                        prefix_len,
+                                        iface_name
+                                    );
+                                }
                             } else {
                                 let prefix_hextets = prefix_len / 16;
                                 let mut base_segs = base_ip.segments();
@@ -490,38 +514,68 @@ pub async fn link(
                                             need -= 1;
                                         }
                                         Ok(_) => {
-                                            eprintln!(
-                                                "{} 'ip addr add' returned non-zero for {} on {}. Continuing attempts.",
-                                                "[WARN]".yellow(),
-                                                assign_target,
-                                                iface_name
-                                            );
+                                            if strict {
+                                                return Err(anyhow!(
+                                                    "'ip addr add' returned non-zero for {} on {}.",
+                                                    assign_target,
+                                                    iface_name
+                                                ));
+                                            } else {
+                                                eprintln!(
+                                                    "{} 'ip addr add' returned non-zero for {} on {}. Continuing attempts.",
+                                                    "[WARN]".yellow(),
+                                                    assign_target,
+                                                    iface_name
+                                                );
+                                            }
                                         }
                                         Err(e) => {
-                                            eprintln!(
-                                                "{} Failed to execute 'ip' for IPv6 assignment: {}. Continuing attempts.",
-                                                "[WARN]".yellow(),
-                                                e
-                                            );
+                                            if strict {
+                                                return Err(anyhow!(
+                                                    "Failed to execute 'ip' for IPv6 assignment: {}",
+                                                    e
+                                                ));
+                                            } else {
+                                                eprintln!(
+                                                    "{} Failed to execute 'ip' for IPv6 assignment: {}. Continuing attempts.",
+                                                    "[WARN]".yellow(),
+                                                    e
+                                                );
+                                            }
                                         }
                                     }
                                 }
 
                                 if need > 0 {
-                                    eprintln!(
-                                        "{} Could not assign sufficient IPv6 addresses to reach requested --num on interface {} (got {}).",
-                                        "[WARN]".yellow(),
-                                        iface_name,
-                                        num - need
-                                    );
+                                    if strict {
+                                        return Err(anyhow!(
+                                            "Could not assign sufficient IPv6 addresses to reach requested --num on interface {} (got {}).",
+                                            iface_name,
+                                            num - need
+                                        ));
+                                    } else {
+                                        eprintln!(
+                                            "{} Could not assign sufficient IPv6 addresses to reach requested --num on interface {} (got {}).",
+                                            "[WARN]".yellow(),
+                                            iface_name,
+                                            num - need
+                                        );
+                                    }
                                 }
                             }
                         } else {
-                            eprintln!(
-                                "{} No global IPv6 prefix found on interface {}; skipping IPv6 auto-assign.",
-                                "[WARN]".yellow(),
-                                iface_name
-                            );
+                            if strict {
+                                return Err(anyhow!(
+                                    "No global IPv6 prefix found on interface {}",
+                                    iface_name
+                                ));
+                            } else {
+                                eprintln!(
+                                    "{} No global IPv6 prefix found on interface {}; skipping IPv6 auto-assign.",
+                                    "[WARN]".yellow(),
+                                    iface_name
+                                );
+                            }
                         }
                     }
                 }
@@ -532,20 +586,35 @@ pub async fn link(
                         .args(["-4", "-o", "addr", "show", "dev", iface_name])
                         .output();
                     if let Err(e) = out4_res {
-                        eprintln!(
-                            "{} Failed to run 'ip' to inspect interface {} for IPv4: {}. Skipping IPv4 auto-assign.",
-                            "[WARN]".yellow(),
-                            iface_name,
-                            e
-                        );
+                        if strict {
+                            return Err(anyhow!(
+                                "Failed to run 'ip' to inspect interface {} for IPv4: {}",
+                                iface_name,
+                                e
+                            ));
+                        } else {
+                            eprintln!(
+                                "{} Failed to run 'ip' to inspect interface {} for IPv4: {}. Skipping IPv4 auto-assign.",
+                                "[WARN]".yellow(),
+                                iface_name,
+                                e
+                            );
+                        }
                     } else {
                         let out4 = out4_res.unwrap();
                         if !out4.status.success() {
-                            eprintln!(
-                                "{} 'ip' returned non-zero when inspecting interface {} for IPv4. Skipping IPv4 auto-assign.",
-                                "[WARN]".yellow(),
-                                iface_name
-                            );
+                            if strict {
+                                return Err(anyhow!(
+                                    "'ip' returned non-zero when inspecting interface {} for IPv4",
+                                    iface_name
+                                ));
+                            } else {
+                                eprintln!(
+                                    "{} 'ip' returned non-zero when inspecting interface {} for IPv4. Skipping IPv4 auto-assign.",
+                                    "[WARN]".yellow(),
+                                    iface_name
+                                );
+                            }
                         } else {
                             let stdout4 = String::from_utf8_lossy(&out4.stdout).to_string();
                             let mut found_v4_prefix: Option<(std::net::Ipv4Addr, usize)> = None;
@@ -570,12 +639,20 @@ pub async fn link(
                             }
                             if let Some((base4, plen4)) = found_v4_prefix {
                                 if plen4 >= 31 {
-                                    eprintln!(
-                                        "{} IPv4 prefix too small /{} on interface {}; skipping IPv4 auto-assign.",
-                                        "[WARN]".yellow(),
-                                        plen4,
-                                        iface_name
-                                    );
+                                    if strict {
+                                        return Err(anyhow!(
+                                            "IPv4 prefix too small /{} on interface {}; cannot auto-assign IPv4 addresses.",
+                                            plen4,
+                                            iface_name
+                                        ));
+                                    } else {
+                                        eprintln!(
+                                            "{} IPv4 prefix too small /{} on interface {}; skipping IPv4 auto-assign.",
+                                            "[WARN]".yellow(),
+                                            plen4,
+                                            iface_name
+                                        );
+                                    }
                                 } else {
                                     let octs = base4.octets();
                                     let base_int = ((octs[0] as u32) << 24)
@@ -640,37 +717,67 @@ pub async fn link(
                                                 need4 -= 1;
                                             }
                                             Ok(_) => {
-                                                eprintln!(
-                                                    "{} 'ip addr add' returned non-zero for {} on {}. Continuing attempts.",
-                                                    "[WARN]".yellow(),
-                                                    assign_target,
-                                                    iface_name
-                                                );
+                                                if strict {
+                                                    return Err(anyhow!(
+                                                        "'ip addr add' returned non-zero for {} on {}.",
+                                                        assign_target,
+                                                        iface_name
+                                                    ));
+                                                } else {
+                                                    eprintln!(
+                                                        "{} 'ip addr add' returned non-zero for {} on {}. Continuing attempts.",
+                                                        "[WARN]".yellow(),
+                                                        assign_target,
+                                                        iface_name
+                                                    );
+                                                }
                                             }
                                             Err(e) => {
-                                                eprintln!(
-                                                    "{} Failed to execute 'ip' for IPv4 assignment: {}. Continuing attempts.",
-                                                    "[WARN]".yellow(),
-                                                    e
-                                                );
+                                                if strict {
+                                                    return Err(anyhow!(
+                                                        "Failed to execute 'ip' for IPv4 assignment: {}",
+                                                        e
+                                                    ));
+                                                } else {
+                                                    eprintln!(
+                                                        "{} Failed to execute 'ip' for IPv4 assignment: {}. Continuing attempts.",
+                                                        "[WARN]".yellow(),
+                                                        e
+                                                    );
+                                                }
                                             }
                                         }
                                     }
                                     if need4 > 0 {
-                                        eprintln!(
-                                            "{} Could not assign sufficient IPv4 addresses to reach requested --num on interface {} (got {}).",
-                                            "[WARN]".yellow(),
-                                            iface_name,
-                                            num - need4
-                                        );
+                                        if strict {
+                                            return Err(anyhow!(
+                                                "Could not assign sufficient IPv4 addresses to reach requested --num on interface {} (got {}).",
+                                                iface_name,
+                                                num - need4
+                                            ));
+                                        } else {
+                                            eprintln!(
+                                                "{} Could not assign sufficient IPv4 addresses to reach requested --num on interface {} (got {}).",
+                                                "[WARN]".yellow(),
+                                                iface_name,
+                                                num - need4
+                                            );
+                                        }
                                     }
                                 }
                             } else {
-                                eprintln!(
-                                    "{} No IPv4 prefix found on interface {}; skipping IPv4 auto-assign.",
-                                    "[WARN]".yellow(),
-                                    iface_name
-                                );
+                                if strict {
+                                    return Err(anyhow!(
+                                        "No IPv4 prefix found on interface {}",
+                                        iface_name
+                                    ));
+                                } else {
+                                    eprintln!(
+                                        "{} No IPv4 prefix found on interface {}; skipping IPv4 auto-assign.",
+                                        "[WARN]".yellow(),
+                                        iface_name
+                                    );
+                                }
                             }
                         }
                     }
@@ -730,11 +837,34 @@ pub async fn link(
         }
 
         if addresses.is_empty() {
+            if strict {
+                return Err(anyhow!(
+                    "Could not detect public IP and --strict specified; aborting."
+                ));
+            } else {
+                eprintln!(
+                    "{} Could not detect public IP. Using placeholder.",
+                    "[WARN]".yellow()
+                );
+                addresses.push("<YOUR_SERVER_IP>".to_string());
+            }
+        }
+    }
+
+    if addresses.len() < num {
+        if strict {
+            return Err(anyhow!(
+                "Requested {} addresses but only {} available (strict mode)",
+                num,
+                addresses.len()
+            ));
+        } else {
             eprintln!(
-                "{} Could not detect public IP. Using placeholder.",
-                "[WARN]".yellow()
+                "{} Could only obtain {} address(es) (requested {}). Continuing with available addresses.",
+                "[WARN]".yellow(),
+                addresses.len(),
+                num
             );
-            addresses.push("<YOUR_SERVER_IP>".to_string());
         }
     }
 
@@ -799,7 +929,7 @@ fn collect_links_from_input(input: &str) -> Result<Vec<String>> {
             continue;
         }
         // try parse small JSON fragments like ["..."] or "..."
-        if (l.starts_with('[') || l.starts_with('"')) {
+        if l.starts_with('[') || l.starts_with('"') {
             if let Ok(v2) = serde_json::from_str::<Value>(l) {
                 if let Some(s) = v2.as_str() {
                     out.push(s.to_string());
@@ -1313,6 +1443,7 @@ mod tests {
             1,
             false,
             false,
+            false,
         )
         .await;
         assert!(
@@ -1369,10 +1500,11 @@ mod tests {
             &paths,
             "astr".to_string(),
             vec!["1.2.3.4".to_string()],
-            true,
+            false,
             false,
             None,
             1,
+            false,
             false,
             false,
         )

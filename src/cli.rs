@@ -165,6 +165,11 @@ pub enum Commands {
         #[arg(long = "assign-v4")]
         assign_v4: bool,
 
+        /// When set, treat failures to detect/assign addresses as fatal errors (strict mode).
+        /// Without this flag, the command will WARN and try to continue (best-effort).
+        #[arg(long = "strict")]
+        strict: bool,
+
         /// Number of addresses/links to generate when auto-detecting (default: 1)
         #[arg(long = "num", value_name = "N", default_value = "1")]
         num: usize,
