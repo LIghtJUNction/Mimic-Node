@@ -8,7 +8,9 @@
       {
         "tag": "google",
         "type": "tls",
-        "server": "8.8.8.8"
+        "server": "dns.google",
+        "server_port": 853,
+        "domain_resolver": "alidns"
       },
       {
         "tag": "alidns",
