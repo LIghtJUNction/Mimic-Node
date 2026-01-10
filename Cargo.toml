@@ -23,6 +23,7 @@ colored = "3.0"
 hex = "0.4"
 x25519-dalek = "2"
 url = "2.5"
+if-addrs = "0.6"
 
 [features]
 default = []

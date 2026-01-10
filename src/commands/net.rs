@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
 use colored::*;
+use if_addrs::get_if_addrs;
 use std::fs;
 use std::io::{self, BufRead};
 use std::process::Command;
@@ -149,6 +150,45 @@ pub async fn sni(
     Ok(())
 }
 
+// Choose a sensible IPv6 address from a list of candidate IpAddrs.
+// Preference order:
+// 1) global unicast (first one encountered)
+// 2) unique-local addresses (fc00::/7) if no global unicast found
+fn choose_ipv6_candidate<I>(ips: I) -> Option<std::net::Ipv6Addr>
+where
+    I: IntoIterator<Item = std::net::IpAddr>,
+{
+    let mut ula: Option<std::net::Ipv6Addr> = None;
+    for ip in ips {
+        if let std::net::IpAddr::V6(v6) = ip {
+            if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
+                continue;
+            }
+
+            // Skip link-local fe80::/10: check top 10 bits via first hextet mask
+            let first_hextet = v6.segments()[0];
+            if (first_hextet & 0xffc0) == 0xfe80 {
+                continue;
+            }
+
+            // Unique local addresses fc00::/7 (first byte 0xfc or 0xfd)
+            let first_byte = v6.octets()[0];
+            if first_byte == 0xfc || first_byte == 0xfd {
+                if ula.is_none() {
+                    ula = Some(v6);
+                }
+                continue;
+            }
+
+            // Otherwise treat as global unicast candidate
+            return Some(v6);
+        }
+    }
+
+    // fallback to ULA if no global unicast found
+    ula
+}
+
 pub async fn link(
     paths: &Paths,
     email: String,
@@ -215,18 +255,37 @@ pub async fn link(
             .timeout(Duration::from_secs(3))
             .build()?;
 
+        // IPv4 public detection via api.ipify.org
         if detect_v4
             && let Ok(ip) = client.get("https://api.ipify.org").send().await
             && let Ok(text) = ip.text().await
         {
             addresses.push(text);
         }
-        if detect_v6
-            && let Ok(ip) = client.get("https://api6.ipify.org").send().await
-            && let Ok(text) = ip.text().await
-        {
-            addresses.push(text);
+
+        // IPv6 public detection via api6.ipify.org
+        if detect_v6 {
+            if let Ok(ip) = client.get("https://api6.ipify.org").send().await
+                && let Ok(text) = ip.text().await
+            {
+                addresses.push(text);
+            } else {
+                // Fallback: try to detect a local IPv6 address from system interfaces.
+                // This picks a global unicast if available; otherwise a unique-local (ULA).
+                if let Ok(ifaces) = get_if_addrs() {
+                    let ips_iter = ifaces.into_iter().map(|ifa| ifa.addr.ip());
+                    if let Some(v6) = choose_ipv6_candidate(ips_iter) {
+                        eprintln!(
+                            "{} Auto-detected local IPv6 (fallback): {} (may not be reachable publicly)",
+                            "[WARN]".yellow(),
+                            v6
+                        );
+                        addresses.push(v6.to_string());
+                    }
+                }
+            }
         }
+
         if addresses.is_empty() {
             eprintln!(
                 "{} Could not detect public IP. Using placeholder.",
@@ -538,5 +597,17 @@ mod tests {
         if let Err(e) = fs::remove_dir_all(&dir) {
             eprintln!("[WARN] Failed to remove test directory {:?}: {}", dir, e);
         }
+    }
+
+    #[test]
+    fn test_choose_ipv6_candidate_prefers_global() {
+        use std::net::IpAddr;
+        let ips = vec![
+            IpAddr::V6("fe80::1".parse().unwrap()), // link-local (ignored)
+            IpAddr::V6("fc00::1".parse().unwrap()), // ULA (fallback)
+            IpAddr::V6("2001:db8::1".parse().unwrap()), // global (preferred)
+        ];
+        let chosen = choose_ipv6_candidate(ips.into_iter());
+        assert_eq!(chosen, Some("2001:db8::1".parse().unwrap()));
     }
 }
