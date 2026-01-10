@@ -66,6 +66,8 @@ paru -S mimic-node-git
 安装完成后，请按顺序初始化节点：
 
 ```bash
+# 推荐：一键生成命令补全并应用，推荐使用fish
+mimictl completions -s fish -a
 # 1. 启用配置覆盖层 (至关重要！否则修改无法保存)
 sudo systemctl enable --now mimic-node-mount.service
 # 如果报错，最终解决方法是删除/var/lib/mimic-node文件夹，使用mimicctl reset命令重置为默认配置
