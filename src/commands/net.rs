@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use colored::*;
 use if_addrs::get_if_addrs;
+
 use std::fs;
 use std::io::{self, BufRead};
 use std::process::Command;
@@ -241,6 +242,7 @@ pub async fn link(
     v6: bool,
     interface: Option<String>,
     num: usize,
+    assign: bool,
 ) -> Result<()> {
     let input_path = paths.get_input_config_path();
     let config = load_config(input_path)?;
@@ -310,14 +312,18 @@ pub async fn link(
                     return Err(anyhow!("No addresses found on interface: {}", iface_name));
                 }
 
-                // prefer IPv6 if requested
+                // If user wants IPv6 and specified a number, collect up to `num` IPv6 addresses from this interface.
                 if detect_v6 {
-                    if let Some(v6) = choose_ipv6_candidate(iface_ips.clone().into_iter()) {
-                        addresses.push(v6.to_string());
+                    let v6_candidates = collect_ipv6_candidates(iface_ips.clone().into_iter(), num);
+                    if !v6_candidates.is_empty() {
+                        for v in v6_candidates {
+                            addresses.push(v.to_string());
+                        }
                     } else if let Some(v4) = iface_ips.iter().find_map(|ip| match ip {
                         std::net::IpAddr::V4(v4) => Some(*v4),
                         _ => None,
                     }) {
+                        // no IPv6 candidates; fall back to IPv4 if available
                         addresses.push(v4.to_string());
                     }
                 } else {
@@ -327,12 +333,156 @@ pub async fn link(
                         _ => None,
                     }) {
                         addresses.push(v4.to_string());
-                    } else if let Some(v6) = choose_ipv6_candidate(iface_ips.into_iter()) {
-                        addresses.push(v6.to_string());
+                    } else {
+                        // fallback: choose IPv6 candidates if no IPv4 found
+                        let v6_candidate = choose_ipv6_candidate(iface_ips.into_iter());
+                        if let Some(v6) = v6_candidate {
+                            addresses.push(v6.to_string());
+                        }
                     }
                 }
             } else {
                 return Err(anyhow!("Failed to enumerate network interfaces"));
+            }
+
+            // If caller asked for assignment, or if we are running as root and still need more
+            // addresses to satisfy `num`, perform address generation & assignment in the interface's prefix.
+            let need_more = addresses.len() < num;
+            // Determine if we are root by calling `id -u` (portable-ish check).
+            let is_root = match Command::new("id").arg("-u").output() {
+                Ok(o) => String::from_utf8_lossy(&o.stdout).trim() == "0",
+                Err(_) => false,
+            };
+
+            if assign || (need_more && is_root) {
+                if need_more && is_root && !assign {
+                    eprintln!(
+                        "{} Running as root and not enough addresses available; auto-assigning to reach --num.",
+                        "[INFO]".green()
+                    );
+                }
+
+                // Use `ip -6 -o addr show dev <iface>` to find a global IPv6 and its prefix length.
+                let out = Command::new("ip")
+                    .args(["-6", "-o", "addr", "show", "dev", iface_name])
+                    .output()
+                    .map_err(|e| anyhow!("Failed to run 'ip' to inspect interface: {}", e))?;
+
+                if !out.status.success() {
+                    return Err(anyhow!(
+                        "'ip' returned non-zero when inspecting interface {}",
+                        iface_name
+                    ));
+                }
+
+                let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                // Find first token like 2605:.../64
+                let mut found_prefix: Option<(std::net::Ipv6Addr, usize)> = None;
+                for line in stdout.lines() {
+                    for token in line.split_whitespace() {
+                        if token.contains(':') && token.contains('/') {
+                            if let Some((addr_str, plen_str)) = token.split_once('/') {
+                                if let Ok(plen) = plen_str.parse::<usize>() {
+                                    if let Ok(ipv6) = addr_str.parse::<std::net::Ipv6Addr>() {
+                                        found_prefix = Some((ipv6, plen));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if found_prefix.is_some() {
+                        break;
+                    }
+                }
+
+                let (base_ip, prefix_len) = found_prefix.ok_or_else(|| {
+                    anyhow!("No global IPv6 prefix found on interface {}", iface_name)
+                })?;
+
+                if prefix_len % 16 != 0 {
+                    return Err(anyhow!(
+                        "Unsupported IPv6 prefix length {} on interface {}. Only prefixes divisible by 16 are supported for automatic assignment.",
+                        prefix_len,
+                        iface_name
+                    ));
+                }
+
+                let prefix_hextets = prefix_len / 16;
+                let mut base_segs = base_ip.segments();
+                for i in prefix_hextets..8 {
+                    base_segs[i] = 0;
+                }
+
+                // Compute how many addresses still needed
+                let mut need = if num > addresses.len() {
+                    num - addresses.len()
+                } else {
+                    0
+                };
+                // RNG initialization not required; using rand::random() directly
+                let mut seen = std::collections::HashSet::<String>::new();
+                for a in &addresses {
+                    seen.insert(a.clone());
+                }
+
+                let mut attempts = 0usize;
+                while need > 0 && attempts < (need * 8 + 32) {
+                    attempts += 1;
+                    // Randomize last 64 bits (4 hextets)
+                    let r1: u16 = rand::random::<u16>();
+                    let r2: u16 = rand::random::<u16>();
+                    let r3: u16 = rand::random::<u16>();
+                    let r4: u16 = rand::random::<u16>();
+                    let mut segs = base_segs;
+                    // Fill tail of the address with random hextets starting at prefix boundary
+                    let tail_index = prefix_hextets;
+                    if tail_index <= 4 {
+                        segs[tail_index + 0] = r1;
+                        segs[tail_index + 1] = r2;
+                        segs[tail_index + 2] = r3;
+                        segs[tail_index + 3] = r4;
+                    } else {
+                        // fallback: put randomness into last 4 hextets
+                        segs[4] = r1;
+                        segs[5] = r2;
+                        segs[6] = r3;
+                        segs[7] = r4;
+                    }
+                    let candidate = std::net::Ipv6Addr::from(segs);
+                    let s = candidate.to_string();
+                    if seen.contains(&s) {
+                        continue;
+                    }
+
+                    let assign_target = format!("{}/{}", s, prefix_len);
+                    let status = Command::new("ip")
+                        .args(["-6", "addr", "add", &assign_target, "dev", iface_name])
+                        .status()
+                        .map_err(|e| {
+                            anyhow!("Failed to execute 'ip' for address assignment: {}", e)
+                        })?;
+
+                    if !status.success() {
+                        return Err(anyhow!(
+                            "Failed to assign generated IPv6 address {} on {}. Are you root and is the prefix delegated?",
+                            s,
+                            iface_name
+                        ));
+                    }
+
+                    eprintln!("{} Assigned IPv6 {} on {}", "[INFO]".green(), s, iface_name);
+                    addresses.push(s.clone());
+                    seen.insert(s);
+                    need -= 1;
+                }
+
+                if need > 0 {
+                    return Err(anyhow!(
+                        "Could not assign sufficient IPv6 addresses to reach requested --num on interface {}",
+                        iface_name
+                    ));
+                }
             }
         } else {
             let client = reqwest::Client::builder()
@@ -633,6 +783,7 @@ mod tests {
             false,
             None,
             1,
+            false,
         )
         .await;
         assert!(
@@ -693,6 +844,7 @@ mod tests {
             false,
             None,
             1,
+            false,
         )
         .await;
         assert!(res.is_err(), "link should return error for ambiguous match");

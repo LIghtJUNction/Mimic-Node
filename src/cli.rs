@@ -155,6 +155,11 @@ pub enum Commands {
         #[arg(short = 'i', long = "interface", value_name = "IFACE")]
         interface: Option<String>,
 
+        /// When enabled, generate addresses by assigning within the interface's IPv6 prefix (e.g. /64).
+        /// Useful when the interface has a /64 and you want multiple sibling addresses within that range.
+        #[arg(long = "assign")]
+        assign: bool,
+
         /// Number of addresses/links to generate when auto-detecting (default: 1)
         #[arg(long = "num", value_name = "N", default_value = "1")]
         num: usize,
