@@ -74,9 +74,9 @@ pub async fn sni(
                 continue;
             }
 
-            // 2. Reality check using sing-box
-            // Check if sing-box exists
-            let sing_box_check = Command::new("sing-box")
+            // 2. Reality check using sing-box (allow override via SING_BOX_BIN)
+            let sing_box = std::env::var("SING_BOX_BIN").unwrap_or_else(|_| "sing-box".to_string());
+            let sing_box_check = Command::new(&sing_box)
                 .args(["check", "reality-dest", &format!("{}:443", cand)])
                 .output();
 
@@ -97,7 +97,9 @@ pub async fn sni(
             {
                 best_fallback = Some(cand.clone());
                 // If no sing-box available, stop here
-                if Command::new("sing-box").arg("version").output().is_err() {
+                let sing_box =
+                    std::env::var("SING_BOX_BIN").unwrap_or_else(|_| "sing-box".to_string());
+                if Command::new(&sing_box).arg("version").output().is_err() {
                     eprintln!(
                         "\n{} Selected SNI (H2 supported): {}",
                         "[INFO]".green(),
@@ -157,20 +159,36 @@ pub async fn link(
     let input_path = paths.get_input_config_path();
     let config = load_config(input_path)?;
 
-    let user = config
+    // Use the shared matching logic (same as user commands) so lookups are consistent.
+    // We first ensure an inbound exists, then perform matching. If multiple users match,
+    // we return a helpful, unambiguous error that lists candidates (so the user can choose
+    // a UUID or a more precise pattern).
+    let inbound = config
         .inbounds
         .first()
-        .and_then(|i| {
-            i.users
-                .iter()
-                .find(|u| u.name.starts_with(&format!("{}:", email)))
-        })
-        .ok_or_else(|| anyhow!("User '{}' not found", email))?;
+        .ok_or_else(|| anyhow!("No inbound configuration present."))?;
 
+    let indices = crate::commands::user::find_matching_indices(&inbound.users, &email)?;
+    if indices.is_empty() {
+        return Err(anyhow!("User '{}' not found", email));
+    }
+    if indices.len() > 1 {
+        let candidates: Vec<String> = indices
+            .iter()
+            .map(|&i| inbound.users[i].name.clone())
+            .collect();
+        return Err(anyhow!(
+            "Ambiguous target '{}': matched multiple users: {}. Please specify a UUID or a more specific pattern.",
+            email,
+            candidates.join(", ")
+        ));
+    }
+
+    // Single match -> proceed
+    let user = &inbound.users[indices[0]];
     let parts: Vec<&str> = user.name.split(':').collect();
     let sid = parts.get(parts.len() - 2).unwrap_or(&"").to_string();
 
-    let inbound = config.inbounds.first().unwrap();
     let port = inbound.listen_port;
     let sni = inbound
         .tls
@@ -386,6 +404,9 @@ pub fn completions(_shell: Option<String>, _apply: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::paths::Paths;
+    use std::fs;
+    use uuid::Uuid;
 
     #[test]
     fn test_sid_label_truncates() {
@@ -399,18 +420,119 @@ mod tests {
 
     #[test]
     fn test_link_fragment_uses_sid_label() {
-        let uuid = "uuid";
-        let host = "1.2.3.4";
-        let port = 443;
-        let pbk = "pbk";
-        let sni = "sni.example";
-        let sid = "abcd1234";
-        let flow = "flow";
-        let label = sid_label(sid);
-        let link = format!(
-            "vless://{}@{}:{}?security=reality&encryption=none&pbk={}&fp=chrome&type=tcp&sni={}&sid={}&flow={}#{}",
-            uuid, host, port, pbk, sni, sid, flow, label
+        let parts = sid_label("abcd1234");
+        assert_eq!(parts, "abcd");
+    }
+
+    // Async tests for `link` behavior:
+    // - ensure we match by local part like 'astrbot'
+    // - ensure ambiguous matches return a helpful error
+    #[tokio::test]
+    async fn test_link_matches_local_part() {
+        let base = std::env::temp_dir();
+        let dir = base.join(format!("mimic_node_test_{}", Uuid::new_v4()));
+        let etc = dir.join("etc").join("sing-box");
+        let usr = dir
+            .join("usr")
+            .join("share")
+            .join("mimic-node")
+            .join("default");
+        fs::create_dir_all(&etc).unwrap();
+        fs::create_dir_all(&usr).unwrap();
+
+        let paths = Paths {
+            root: dir.clone(),
+            config: etc.join("config.json"),
+            staging: etc.join("config.new"),
+            pubkey: etc.join("PUBKEY"),
+            staging_pubkey: etc.join("PUBKEY.new"),
+            sni_list: usr.join("sni.txt"),
+            default_config: usr.join("default/config.json"),
+        };
+
+        // Minimal config with a single user whose local-part is "astrbot"
+        let cfg = serde_json::json!({
+            "inbounds": [
+                {
+                    "type": "vless",
+                    "listen_port": 12345,
+                    "users": [ { "name": "astrbot:SID1:0", "uuid": "1111", "flow": "xtls" } ],
+                    "tls": { "server_name": "sni.example" }
+                }
+            ]
+        });
+        fs::write(&paths.config, serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
+        fs::write(&paths.pubkey, "PUBKEY").unwrap();
+
+        // Provide explicit addresses to avoid network detection in the test
+        let res = link(
+            &paths,
+            "astrbot".to_string(),
+            vec!["1.2.3.4".to_string()],
+            true,
+            false,
+        )
+        .await;
+        assert!(
+            res.is_ok(),
+            "link should succeed for exact local-part match"
         );
-        assert!(link.ends_with("#abcd"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_link_ambiguous() {
+        let base = std::env::temp_dir();
+        let dir = base.join(format!("mimic_node_test_{}", Uuid::new_v4()));
+        let etc = dir.join("etc").join("sing-box");
+        let usr = dir
+            .join("usr")
+            .join("share")
+            .join("mimic-node")
+            .join("default");
+        fs::create_dir_all(&etc).unwrap();
+        fs::create_dir_all(&usr).unwrap();
+
+        let paths = Paths {
+            root: dir.clone(),
+            config: etc.join("config.json"),
+            staging: etc.join("config.new"),
+            pubkey: etc.join("PUBKEY"),
+            staging_pubkey: etc.join("PUBKEY.new"),
+            sni_list: usr.join("sni.txt"),
+            default_config: usr.join("default/config.json"),
+        };
+
+        // Two users sharing same short local-part "astr"
+        let cfg = serde_json::json!({
+            "inbounds": [
+                {
+                    "type": "vless",
+                    "listen_port": 12345,
+                    "users": [
+                        { "name": "astr:SID1:0", "uuid": "1111", "flow": "xtls" },
+                        { "name": "astr:SID2:0", "uuid": "2222", "flow": "xtls" }
+                    ],
+                    "tls": { "server_name": "sni.example" }
+                }
+            ]
+        });
+        fs::write(&paths.config, serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
+        fs::write(&paths.pubkey, "PUBKEY").unwrap();
+
+        let res = link(
+            &paths,
+            "astr".to_string(),
+            vec!["1.2.3.4".to_string()],
+            true,
+            false,
+        )
+        .await;
+        assert!(res.is_err(), "link should return error for ambiguous match");
+        let err_msg = format!("{:?}", res.err().unwrap());
+        assert!(err_msg.contains("Ambiguous target") || err_msg.contains("matched multiple users"));
+
+        fs::remove_dir_all(dir).unwrap();
     }
 }

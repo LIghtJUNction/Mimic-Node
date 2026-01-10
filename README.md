@@ -119,14 +119,27 @@ sudo mimictl apply
 <summary>用户管理（展开查看）</summary>
 
 ```bash
-# 添加用户 (返回 UUID 和 ShortID)
-sudo mimictl add alice@example.com
+# 添加用户 (返回 UUID 和 ShortID)。支持批量：可以同时添加多个邮箱
+sudo mimictl add alice@example.com bob@example.com
 
-# 删除用户
+# 删除用户。支持批量与通配模式，例如删除某个域内所有用户；使用 --dry-run 预览，使用 --apply 立即应用
 sudo mimictl del alice@example.com
+sudo mimictl del '*@example.com' --dry-run
+sudo mimictl del '*@example.com' --apply
 
-# 重置用户的 UUID 和 ShortID (当用户被封锁时)
+# 重置用户的 UUID 和 ShortID (当用户被封锁时)。支持批量与通配模式，使用 --dry-run 预览/--apply 立即应用
 sudo mimictl reset-user alice@example.com
+sudo mimictl reset-user '*@example.com' --dry-run
+sudo mimictl reset-user '*@example.com' --apply
+
+# 修改用户 (支持批量)
+# - 批量设置 level
+mimictl update '*@example.com' --level 1
+# - 重命名单个用户邮箱（仅当精确匹配一个用户时允许）
+mimictl update alice@example.com --email alice+new@example.com --apply
+# - 批量替换邮箱片段（字符串替换）；使用 --regex 可把 FROM 当作正则
+mimictl update '*@old.com' --email-replace '@old.com' '@new.com' --dry-run
+mimictl update 'user@domain.com' --email-replace '^(.*)@old\\.com$' '$1@new.com' --regex --apply
 
 # 列出所有用户
 sudo mimictl list

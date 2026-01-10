@@ -31,6 +31,14 @@ pub enum Commands {
         /// Emails or glob patterns (e.g., "*@example.com")
         #[arg(required = true)]
         targets: Vec<String>,
+
+        /// Show what would be changed, do not write staging
+        #[arg(short = 'n', long = "dry-run")]
+        dry_run: bool,
+
+        /// Apply staged changes immediately
+        #[arg(long = "apply")]
+        apply: bool,
     },
 
     /// Update user attributes (supports batch). Example: `mimictl update '*@example.com' --level 1`
@@ -47,6 +55,26 @@ pub enum Commands {
         /// Rename the user's email. Only allowed when exactly one user is matched.
         #[arg(short = 'e', long = "email")]
         email: Option<String>,
+
+        /// Replace email substrings: provide FROM and TO (e.g. --email-replace FROM TO)
+        #[arg(long = "email-replace", value_names = ["FROM", "TO"], num_args = 2)]
+        email_replace: Option<Vec<String>>,
+
+        /// Treat the FROM pattern as a regular expression (used with --email-replace)
+        #[arg(long = "regex")]
+        regex: bool,
+
+        /// Replace only the first match in the email part (default behavior replaces all matches)
+        #[arg(long = "replace-first")]
+        replace_first: bool,
+
+        /// Show what would be changed, do not write staging
+        #[arg(short = 'n', long = "dry-run")]
+        dry_run: bool,
+
+        /// Apply staged changes immediately
+        #[arg(long = "apply")]
+        apply: bool,
     },
 
     /// Reset UUID and SID for user(s) (supports batch and patterns)
@@ -54,6 +82,14 @@ pub enum Commands {
         /// Emails or glob patterns to match users (e.g., "alice@example.com", "*@example.com")
         #[arg(required = true)]
         targets: Vec<String>,
+
+        /// Show what would be changed, do not write staging
+        #[arg(short = 'n', long = "dry-run")]
+        dry_run: bool,
+
+        /// Apply staged changes immediately
+        #[arg(long = "apply")]
+        apply: bool,
     },
 
     /// Reset global config to defaults
@@ -119,6 +155,10 @@ pub enum Commands {
     List {
         /// Filter by name substring
         filter: Option<String>,
+
+        /// Output as JSON array (compact) for scripts
+        #[arg(long = "json")]
+        json: bool,
     },
 
     /// Show details for specific user(s) (supports batch and patterns)
@@ -126,6 +166,10 @@ pub enum Commands {
         /// Emails or glob patterns to match users
         #[arg(required = true)]
         targets: Vec<String>,
+
+        /// Output as JSON array (compact) for scripts
+        #[arg(long = "json")]
+        json: bool,
     },
 
     /// Show current config and PUBKEY

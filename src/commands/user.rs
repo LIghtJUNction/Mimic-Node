@@ -41,7 +41,7 @@ fn sync_short_ids(config: &mut config::SingBoxConfig) {
 }
 
 /// Find matching user indices for a given target (uuid, anchored email, glob, or substring)
-fn find_matching_indices(users: &[config::User], target: &str) -> Result<Vec<usize>> {
+pub(crate) fn find_matching_indices(users: &[config::User], target: &str) -> Result<Vec<usize>> {
     // If target looks like a UUID, try exact uuid match first
     if uuid::Uuid::parse_str(target).is_ok() {
         let exact: Vec<usize> = users
@@ -180,111 +180,147 @@ pub fn add(paths: &Paths, emails: Vec<String>, level: u32) -> Result<()> {
     Ok(())
 }
 
-pub fn del(paths: &Paths, targets: Vec<String>) -> Result<()> {
+pub fn del(paths: &Paths, targets: Vec<String>, dry_run: bool, apply: bool) -> Result<()> {
     let input_path = paths.get_input_config_path();
     let mut config = load_config(input_path)?;
-
-    // Track total deletions across all targets
-    let mut total_deleted: usize = 0;
-
-    for target in targets {
-        let mut deleted_here: usize = 0;
-
-        if let Some(inbound) = config.inbounds.first_mut() {
-            // 1) If target is a UUID, try exact UUID match first
-            if uuid::Uuid::parse_str(&target).is_ok() {
-                let before = inbound.users.len();
-                inbound.users.retain(|u| u.uuid != target);
-                deleted_here = before - inbound.users.len();
-
-                // If no exact UUID match, try substring fallback (name or uuid or local part of email)
-                if deleted_here == 0 {
-                    let before2 = inbound.users.len();
-                    let local = target.split('@').next().unwrap_or(&target).to_string();
-                    inbound.users.retain(|u| {
-                        !(u.uuid.contains(&target)
-                            || u.name.contains(&target)
-                            || u.name.contains(&local))
-                    });
-                    deleted_here = before2 - inbound.users.len();
-                }
-            } else {
-                // 2) Handle wildcard or anchored email/specific name match
-                let pattern = if target.contains('*') || target.contains('?') {
-                    regex::escape(&target)
-                        .replace("\\*", ".*")
-                        .replace("\\?", ".")
-                } else {
-                    regex::escape(&target)
-                };
-
-                // Try anchored-match (email:sid:level prefix)
-                let regex_str = format!("^{}:", pattern);
-                let re = Regex::new(&regex_str)?;
-                let before = inbound.users.len();
-                inbound.users.retain(|u| !re.is_match(&u.name));
-                deleted_here = before - inbound.users.len();
-
-                // 3) If nothing matched, do a substring fallback on name/uuid/local part
-                if deleted_here == 0 {
-                    let before2 = inbound.users.len();
-                    let local = target.split('@').next().unwrap_or(&target).to_string();
-                    inbound.users.retain(|u| {
-                        !(u.name.contains(&target)
-                            || u.name.contains(&local)
-                            || u.uuid.contains(&target))
-                    });
-                    deleted_here = before2 - inbound.users.len();
-                }
-            }
-        }
-
-        if deleted_here > 0 {
-            total_deleted += deleted_here;
-            eprintln!(
-                "{} Deleted {} user(s) for target: {}",
-                "[INFO]".green(),
-                deleted_here,
-                target
-            );
-        } else {
-            eprintln!(
-                "{} No users matched for target: {}",
-                "[WARN]".yellow(),
-                target
-            );
-        }
-    }
-
-    if total_deleted == 0 {
-        return Err(anyhow!("No users matched the provided target(s)."));
-    }
-
-    // Only sync and persist when we actually deleted something
-    sync_short_ids(&mut config);
-    save_config(&paths.staging, &config)?;
-
-    eprintln!(
-        "{} Deletion(s) staged. Run 'mimictl apply' to activate.",
-        "[INFO]".green()
-    );
-
-    Ok(())
-}
-
-/// Reset uuid and sid for matched user(s) - supports batch/patterns
-pub fn reset(paths: &Paths, targets: Vec<String>) -> Result<()> {
-    let input_path = paths.get_input_config_path();
-    let mut config = load_config(input_path)?;
-
-    let mut total_reset = 0usize;
 
     if let Some(inbound) = config.inbounds.first_mut() {
-        // Avoid resetting the same user twice in one run
-        let mut changed_indices: HashSet<usize> = HashSet::new();
+        // Collect matches per target and unique indices to delete
+        let mut to_delete: HashSet<usize> = HashSet::new();
+        let mut per_target_matches: Vec<(String, Vec<usize>)> = Vec::new();
 
         for target in targets {
             let indices = find_matching_indices(&inbound.users, &target)?;
+            if indices.is_empty() {
+                eprintln!(
+                    "{} No users matched for target: {}",
+                    "[WARN]".yellow(),
+                    target
+                );
+                continue;
+            }
+            per_target_matches.push((target.clone(), indices.clone()));
+            for idx in indices {
+                to_delete.insert(idx);
+            }
+        }
+
+        if to_delete.is_empty() {
+            return Err(anyhow!("No users matched the provided target(s)."));
+        }
+
+        // Dry-run: just show which users would be deleted
+        if dry_run {
+            eprintln!(
+                "{} Dry-run: the following users would be deleted:",
+                "[INFO]".green()
+            );
+            let mut printed: HashSet<usize> = HashSet::new();
+            for (target, indices) in &per_target_matches {
+                let mut printed_here = 0usize;
+                for idx in indices {
+                    if printed.insert(*idx) {
+                        let u = &inbound.users[*idx];
+                        println!("{}\t{}", u.name, u.uuid);
+                        printed_here += 1;
+                    }
+                }
+                if printed_here > 0 {
+                    eprintln!(
+                        "{} Would delete {} user(s) for target: {}",
+                        "[INFO]".green(),
+                        printed_here,
+                        target
+                    );
+                } else {
+                    eprintln!(
+                        "{} No users matched for target: {}",
+                        "[WARN]".yellow(),
+                        target
+                    );
+                }
+            }
+            eprintln!(
+                "{} Total unique users matched: {}",
+                "[INFO]".green(),
+                to_delete.len()
+            );
+            return Ok(());
+        }
+
+        // Report per-target deletions (deduped)
+        let mut seen: HashSet<usize> = HashSet::new();
+        for (target, indices) in &per_target_matches {
+            let new_count = indices.iter().filter(|i| !seen.contains(i)).count();
+            for idx in indices {
+                seen.insert(*idx);
+            }
+            if new_count > 0 {
+                eprintln!(
+                    "{} Deleted {} user(s) for target: {}",
+                    "[INFO]".green(),
+                    new_count,
+                    target
+                );
+            } else {
+                eprintln!(
+                    "{} No users matched for target: {}",
+                    "[WARN]".yellow(),
+                    target
+                );
+            }
+        }
+
+        // Perform deletion
+        let before = inbound.users.len();
+        let mut kept: Vec<config::User> = Vec::with_capacity(inbound.users.len());
+        for (i, u) in inbound.users.iter().enumerate() {
+            if !to_delete.contains(&i) {
+                kept.push(u.clone());
+            }
+        }
+        inbound.users = kept;
+        let deleted_total = before - inbound.users.len();
+
+        if deleted_total == 0 {
+            return Err(anyhow!("No users matched the provided target(s)."));
+        }
+
+        // Persist changes
+        sync_short_ids(&mut config);
+        save_config(&paths.staging, &config)?;
+
+        eprintln!(
+            "{} Deletion(s) staged. Run 'mimictl apply' to activate.",
+            "[INFO]".green()
+        );
+
+        // Optionally apply immediately
+        if apply {
+            eprintln!("{} Applying staged changes...", "[INFO]".green());
+            crate::commands::system::apply(paths)?;
+        }
+
+        Ok(())
+    } else {
+        Err(anyhow!("No inbound configuration present."))
+    }
+}
+
+/// Reset uuid and sid for matched user(s) - supports batch/patterns
+pub fn reset(paths: &Paths, targets: Vec<String>, dry_run: bool, apply: bool) -> Result<()> {
+    let input_path = paths.get_input_config_path();
+    let mut config = load_config(input_path)?;
+
+    // Plan resets first (to support dry-run and conflict-free application)
+    // planned: (idx, old_name, old_uuid, new_name, new_sid)
+    let mut planned: Vec<(usize, String, String, String, String)> = Vec::new();
+
+    if let Some(inbound) = config.inbounds.first_mut() {
+        let mut seen: HashSet<usize> = HashSet::new();
+
+        for target in &targets {
+            let indices = find_matching_indices(&inbound.users, target)?;
 
             if indices.is_empty() {
                 eprintln!(
@@ -296,58 +332,83 @@ pub fn reset(paths: &Paths, targets: Vec<String>) -> Result<()> {
             }
 
             for idx in indices {
-                if changed_indices.contains(&idx) {
+                if seen.contains(&idx) {
+                    // already planned via a previous target
                     continue;
                 }
 
-                let user = &mut inbound.users[idx];
-                let parts: Vec<&str> = user.name.split(':').collect();
+                let user = &inbound.users[idx];
+                let old_name = user.name.clone();
+                let old_uuid = user.uuid.clone();
+                let parts: Vec<&str> = old_name.split(':').collect();
                 if parts.len() < 3 {
                     eprintln!(
                         "{} Skipping malformed user name: {}",
                         "[WARN]".yellow(),
-                        user.name
+                        old_name
                     );
                     continue;
                 }
 
                 let email = parts[..parts.len() - 2].join(":");
                 let level = parts.last().unwrap_or(&"0");
-                let old_sid = parts.get(parts.len() - 2).unwrap_or(&"");
 
                 let new_sid = generate_sid();
-                let new_uuid = generate_uuid();
                 let new_name = format!("{}:{}:{}", email, new_sid, level);
 
-                eprintln!(
-                    "{} Resetting user {} (Level: {})",
-                    "[INFO]".green(),
-                    email,
-                    level
-                );
-                eprintln!(
-                    "{} Old SID: {} -> New SID: {}",
-                    "[INFO]".green(),
-                    old_sid,
-                    new_sid
-                );
-
-                user.name = new_name;
-                user.uuid = new_uuid.clone();
-
-                println!("uuid: {}\nsid: {}", new_uuid, new_sid);
-
-                changed_indices.insert(idx);
-                total_reset += 1;
+                planned.push((idx, old_name, old_uuid, new_name, new_sid));
+                seen.insert(idx);
             }
         }
     }
 
-    if total_reset == 0 {
+    if planned.is_empty() {
         return Err(anyhow!("No users matched the provided target(s)."));
     }
 
-    // Persist
+    // Dry-run: show planned changes and do not write staging
+    if dry_run {
+        eprintln!(
+            "{} Dry-run: {} reset(s) planned.",
+            "[INFO]".green(),
+            planned.len()
+        );
+        for (_idx, old_name, old_uuid, new_name, new_sid) in &planned {
+            eprintln!(
+                "{} Would reset: {} -> {} (uuid: {} -> <new>, sid: {})",
+                "[INFO]".green(),
+                old_name,
+                new_name,
+                old_uuid,
+                new_sid
+            );
+        }
+        return Ok(());
+    }
+
+    // Apply resets
+    if let Some(inbound) = config.inbounds.first_mut() {
+        for (idx, old_name, old_uuid, new_name, new_sid) in planned {
+            let user = &mut inbound.users[idx];
+            let new_uuid = generate_uuid();
+
+            user.name = new_name.clone();
+            user.uuid = new_uuid.clone();
+
+            eprintln!(
+                "{} Reset user: {} -> {} (uuid: {} -> {})",
+                "[INFO]".green(),
+                old_name,
+                new_name,
+                old_uuid,
+                new_uuid
+            );
+
+            println!("uuid: {}\nsid: {}", new_uuid, new_sid);
+        }
+    }
+
+    // Persist changes to staging
     sync_short_ids(&mut config);
     save_config(&paths.staging, &config)?;
 
@@ -356,12 +417,34 @@ pub fn reset(paths: &Paths, targets: Vec<String>) -> Result<()> {
         "[INFO]".green()
     );
 
+    if apply {
+        eprintln!("{}", "[INFO] Applying staged changes...".green());
+        crate::commands::system::apply(paths)?;
+    }
+
     Ok(())
 }
 
-pub fn list(paths: &Paths, filter: Option<String>) -> Result<()> {
+pub fn list(paths: &Paths, filter: Option<String>, json: bool) -> Result<()> {
     let input_path = paths.get_input_config_path();
     let config = load_config(input_path)?;
+
+    if json {
+        // Collect matching users and output as JSON array
+        let mut out: Vec<config::User> = Vec::new();
+        if let Some(inbound) = config.inbounds.first() {
+            for user in &inbound.users {
+                if let Some(f) = &filter
+                    && !user.name.contains(f)
+                {
+                    continue;
+                }
+                out.push(user.clone());
+            }
+        }
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
 
     if let Some(inbound) = config.inbounds.first() {
         for user in &inbound.users {
@@ -377,13 +460,15 @@ pub fn list(paths: &Paths, filter: Option<String>) -> Result<()> {
 }
 
 /// Show info for one or multiple targets (patterns supported)
-pub fn info(paths: &Paths, targets: Vec<String>) -> Result<()> {
+/// When `json` is true, outputs a JSON array (compact) of matched users for scripts.
+pub fn info(paths: &Paths, targets: Vec<String>, json: bool) -> Result<()> {
     let input_path = paths.get_input_config_path();
     let config = load_config(input_path)?;
 
+    let mut any_matched = false;
     if let Some(inbound) = config.inbounds.first() {
-        let mut matched_any = false;
         let mut seen: HashSet<usize> = HashSet::new();
+        let mut result: Vec<config::User> = Vec::new();
 
         for target in targets {
             let indices = find_matching_indices(&inbound.users, &target)?;
@@ -399,44 +484,79 @@ pub fn info(paths: &Paths, targets: Vec<String>) -> Result<()> {
 
             for idx in indices {
                 if seen.insert(idx) {
-                    println!("{}", serde_json::to_string_pretty(&inbound.users[idx])?);
-                    matched_any = true;
+                    if json {
+                        result.push(inbound.users[idx].clone());
+                    } else {
+                        println!("{}", serde_json::to_string_pretty(&inbound.users[idx])?);
+                    }
+                    any_matched = true;
                 }
             }
         }
 
-        if matched_any {
+        if json && any_matched {
+            println!("{}", serde_json::to_string(&result)?);
+            return Ok(());
+        }
+
+        if any_matched {
             return Ok(());
         }
     }
 
-    Err(anyhow!("User not found for provided target(s)."))
+    Err(anyhow!("No users matched the provided target(s)."))
 }
 
-/// Update user properties in batch (currently supports updating level and single-user email rename)
-/// - `--level N` will set level for all matched users
-/// - `--email new@example.com` must match exactly one user (to avoid accidental duplicates)
+/// Update user properties in batch (supports --level, --email, --email-replace, --regex, --replace-first, --dry-run, --apply)
+///
+/// - `--level N` will set the level for all matched users.
+/// - `--email foo@example.com` will set the email for a single matched user (only allowed when exactly one user matches).
+/// - `--email-replace FROM TO` will replace substrings in the email part for all matched users; use `--regex` to treat FROM as a regex.
+/// - `--replace-first` will perform only the first match replacement (default replaces all matches).
+/// - `--dry-run` will show planned changes without writing staging.
+/// - `--apply` will apply staged changes immediately after saving.
 pub fn update(
     paths: &Paths,
     targets: Vec<String>,
     level: Option<u32>,
     email: Option<String>,
+    email_replace: Option<Vec<String>>,
+    regex: bool,
+    replace_first: bool,
+    dry_run: bool,
+    apply: bool,
 ) -> Result<()> {
-    if level.is_none() && email.is_none() {
+    // Basic validations
+    if level.is_none() && email.is_none() && email_replace.is_none() {
         return Err(anyhow!(
-            "No update action specified. Use --level and/or --email."
+            "No update action specified. Use --level and/or --email/--email-replace."
+        ));
+    }
+    if email.is_some() && email_replace.is_some() {
+        return Err(anyhow!(
+            "--email and --email-replace are mutually exclusive."
+        ));
+    }
+    if regex && email_replace.is_none() {
+        return Err(anyhow!("--regex requires --email-replace to be provided."));
+    }
+    if let Some(ref repl) = email_replace
+        && repl.len() != 2
+    {
+        return Err(anyhow!(
+            "--email-replace requires two arguments: FROM and TO."
         ));
     }
 
     let input_path = paths.get_input_config_path();
     let mut config = load_config(input_path)?;
 
-    // Planned updates: (index, new_name)
-    let mut planned: Vec<(usize, String)> = Vec::new();
+    // planned updates: (index, old_name, new_name)
+    let mut planned: Vec<(usize, String, String)> = Vec::new();
 
     if let Some(inbound) = config.inbounds.first_mut() {
-        for target in targets {
-            let indices = find_matching_indices(&inbound.users, &target)?;
+        for target in &targets {
+            let indices = find_matching_indices(&inbound.users, target)?;
 
             if indices.is_empty() {
                 eprintln!(
@@ -447,6 +567,7 @@ pub fn update(
                 continue;
             }
 
+            // If --email is used it must be unambiguous per-target
             if email.is_some() && indices.len() > 1 {
                 return Err(anyhow!(
                     "Email rename ambiguous for target '{}': {} users matched. Rename is only allowed when exactly one user is matched.",
@@ -456,37 +577,73 @@ pub fn update(
             }
 
             for idx in indices {
-                if planned.iter().any(|(i, _)| *i == idx) {
+                // avoid double-planning for the same user across multiple targets
+                if planned.iter().any(|(i, _old, _)| *i == idx) {
                     continue;
                 }
 
                 let user = &inbound.users[idx];
-                let parts: Vec<&str> = user.name.split(':').collect();
+                let old_name = user.name.clone();
+                let parts: Vec<&str> = old_name.split(':').collect();
                 if parts.len() < 3 {
                     return Err(anyhow!(
                         "Invalid user name format encountered: {}",
-                        user.name
+                        old_name
                     ));
                 }
 
                 let cur_email = parts[..parts.len() - 2].join(":");
                 let sid = parts.get(parts.len() - 2).unwrap_or(&"").to_string();
                 let cur_level = parts.last().unwrap_or(&"0").to_string();
-
                 let new_level = level.map(|l| l.to_string()).unwrap_or(cur_level);
-                let new_email = email.clone().unwrap_or(cur_email);
+
+                // Compute new email (support replace-first and regex backrefs)
+                let new_email = if let Some(e) = &email {
+                    e.clone()
+                } else if let Some(repl) = &email_replace {
+                    let from = &repl[0];
+                    let to = &repl[1];
+                    if regex {
+                        let re = Regex::new(from)?;
+                        if replace_first {
+                            // replace first regex match
+                            re.replace(&cur_email, to.as_str()).to_string()
+                        } else {
+                            // replace all
+                            re.replace_all(&cur_email, to.as_str()).to_string()
+                        }
+                    } else {
+                        if replace_first {
+                            // replace first literal occurrence
+                            cur_email.replacen(from, to, 1)
+                        } else {
+                            // replace all literal occurrences
+                            cur_email.replace(from, to)
+                        }
+                    }
+                } else {
+                    cur_email
+                };
 
                 let new_name = format!("{}:{}:{}", new_email, sid, new_level);
-                planned.push((idx, new_name));
+                planned.push((idx, old_name, new_name));
             }
         }
 
         if planned.is_empty() {
-            return Err(anyhow!("No users matched or nothing to do."));
+            return Err(anyhow!("No users matched the provided target(s)."));
+        }
+
+        // If email rename (explicit) was requested, ensure exactly one user will be modified overall
+        if email.is_some() {
+            let uniq: HashSet<usize> = planned.iter().map(|(i, _, _)| *i).collect();
+            if uniq.len() != 1 {
+                return Err(anyhow!("Email rename requires exactly one matched user."));
+            }
         }
 
         // Validate planned changes for conflicts
-        let planned_idxs: HashSet<usize> = planned.iter().map(|(i, _)| *i).collect();
+        let planned_idxs: HashSet<usize> = planned.iter().map(|(i, _, _)| *i).collect();
         let existing_names: HashSet<String> = inbound
             .users
             .iter()
@@ -496,7 +653,7 @@ pub fn update(
             .collect();
 
         let mut seen_new: HashSet<String> = HashSet::new();
-        for (_idx, new_name) in &planned {
+        for (_idx, _old, new_name) in &planned {
             if existing_names.contains(new_name) {
                 return Err(anyhow!(
                     "Planned update would conflict with existing user: {}",
@@ -511,14 +668,31 @@ pub fn update(
             }
         }
 
+        // Dry run: print planned changes and return without writing staging
+        if dry_run {
+            eprintln!(
+                "{} Dry-run: {} planned update(s)",
+                "[INFO]".green(),
+                planned.len()
+            );
+            for (_idx, old_name, new_name) in &planned {
+                eprintln!("{} {} -> {}", "[INFO]".green(), old_name, new_name);
+            }
+            return Ok(());
+        }
+
         // Apply planned changes
-        for (idx, new_name) in planned {
-            let user = inbound
-                .users
-                .get_mut(idx)
-                .ok_or_else(|| anyhow!("Index out of bounds"))?;
-            let old_name = user.name.clone();
+        let mut applied = 0usize;
+        for (idx, old_name, new_name) in planned {
+            if old_name == new_name {
+                eprintln!("{} No change for user: {}", "[INFO]".green(), old_name);
+                continue;
+            }
+
+            let user = &mut inbound.users[idx];
             user.name = new_name.clone();
+            applied += 1;
+
             eprintln!(
                 "{} Updated user: {} -> {}",
                 "[INFO]".green(),
@@ -526,29 +700,74 @@ pub fn update(
                 new_name
             );
         }
+
+        if applied == 0 {
+            return Err(anyhow!("No changes were necessary."));
+        }
+
+        // Persist
+        sync_short_ids(&mut config);
+        save_config(&paths.staging, &config)?;
+
+        eprintln!(
+            "{} Update(s) staged. Run 'mimictl apply' to activate.",
+            "[INFO]".green()
+        );
+
+        if apply {
+            eprintln!("{} Applying staged changes...", "[INFO]".green());
+            crate::commands::system::apply(paths)?;
+        }
+
+        Ok(())
+    } else {
+        Err(anyhow!("No inbound configuration present."))
     }
-
-    // Persist changes
-    sync_short_ids(&mut config);
-    save_config(&paths.staging, &config)?;
-
-    eprintln!(
-        "{} Update(s) staged. Run 'mimictl apply' to activate.",
-        "[INFO]".green()
-    );
-
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use uuid::Uuid;
+    // Use the global test PATH lock defined in `utils` (TEST_PATH_LOCK) to serialize tests
+    // that modify PATH. This avoids races across test modules.
 
     fn make_user(name: &str, uuid: &str) -> crate::config::User {
         crate::config::User {
             name: name.to_string(),
             uuid: uuid.to_string(),
             flow: FLOW_TYPE.to_string(),
+        }
+    }
+
+    fn setup_tmp() -> std::path::PathBuf {
+        let base = std::env::temp_dir();
+        let dir = base.join(format!("mimic_node_test_{}", Uuid::new_v4()));
+        let etc = dir.join("etc").join("sing-box");
+        let usr = dir
+            .join("usr")
+            .join("share")
+            .join("mimic-node")
+            .join("default");
+        fs::create_dir_all(&etc).expect("create tmp etc dir");
+        fs::create_dir_all(&usr).expect("create tmp usr share default");
+        dir
+    }
+
+    fn build_paths(root: std::path::PathBuf) -> Paths {
+        let etc_singbox = root.join("etc/sing-box");
+        let usr_share = root.join("usr/share/mimic-node");
+        Paths {
+            root: root.clone(),
+            config: etc_singbox.join("config.json"),
+            staging: etc_singbox.join("config.new"),
+            pubkey: etc_singbox.join("PUBKEY"),
+            staging_pubkey: etc_singbox.join("PUBKEY.new"),
+            sni_list: usr_share.join("sni.txt"),
+            default_config: usr_share.join("default/config.json"),
         }
     }
 
@@ -609,5 +828,306 @@ mod tests {
         ];
         let idxs = find_matching_indices(&users, "alice+tag").unwrap();
         assert_eq!(idxs, vec![0]);
+    }
+
+    // ---------------------------------------------------------------------
+    // New tests: update with email replace (non-regex) and dry-run behavior
+    // ---------------------------------------------------------------------
+    #[test]
+    fn test_update_email_replace_non_regex() {
+        // setup temp paths
+        let tmp = env::temp_dir();
+        let dir = tmp.join(format!("mimic_node_test_update_{}", Uuid::new_v4()));
+        let etc = dir.join("etc").join("sing-box");
+        let usr = dir
+            .join("usr")
+            .join("share")
+            .join("mimic-node")
+            .join("default");
+        fs::create_dir_all(&etc).unwrap();
+        fs::create_dir_all(&usr).unwrap();
+
+        let paths = crate::paths::Paths {
+            root: dir.clone(),
+            config: etc.join("config.json"),
+            staging: etc.join("config.new"),
+            pubkey: etc.join("PUBKEY"),
+            staging_pubkey: etc.join("PUBKEY.new"),
+            sni_list: usr.join("sni.txt"),
+            default_config: usr.join("default/config.json"),
+        };
+
+        // Minimal config with one user to be replaced
+        let cfg = serde_json::json!({
+            "inbounds": [
+                {
+                    "type": "vless",
+                    "users": [
+                        { "name": "bob@old.com:SID2:0", "uuid": "2222", "flow": "xtls" },
+                        { "name": "alice@example.com:SID1:0", "uuid": "1111", "flow": "xtls" }
+                    ]
+                }
+            ]
+        });
+        fs::write(&paths.config, serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
+
+        // Run update with replace FROM=@old.com TO=@new.com
+        update(
+            &paths,
+            vec!["*@old.com".to_string()],
+            None,
+            None,
+            Some(vec!["@old.com".to_string(), "@new.com".to_string()]),
+            false, // regex
+            false, // replace_first
+            false, // dry_run
+            false, // apply
+        )
+        .expect("update should succeed");
+
+        // Confirm staging contains updated name for bob
+        let staged = fs::read_to_string(&paths.staging).unwrap();
+        assert!(staged.contains("bob@new.com:SID2:0"));
+
+        fs::remove_dir_all(tmp).unwrap();
+    }
+
+    #[test]
+    fn test_update_email_replace_dry_run() {
+        // setup temp paths
+        let tmp = env::temp_dir();
+        let dir = tmp.join(format!("mimic_node_test_update_dry_{}", Uuid::new_v4()));
+        let etc = dir.join("etc").join("sing-box");
+        let usr = dir
+            .join("usr")
+            .join("share")
+            .join("mimic-node")
+            .join("default");
+        fs::create_dir_all(&etc).unwrap();
+        fs::create_dir_all(&usr).unwrap();
+
+        let paths = crate::paths::Paths {
+            root: dir.clone(),
+            config: etc.join("config.json"),
+            staging: etc.join("config.new"),
+            pubkey: etc.join("PUBKEY"),
+            staging_pubkey: etc.join("PUBKEY.new"),
+            sni_list: usr.join("sni.txt"),
+            default_config: usr.join("default/config.json"),
+        };
+
+        let cfg = serde_json::json!({
+            "inbounds": [
+                {
+                    "type": "vless",
+                    "users": [
+                        { "name": "bob@old.com:SID2:0", "uuid": "2222", "flow": "xtls" }
+                    ]
+                }
+            ]
+        });
+        fs::write(&paths.config, serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
+
+        // Dry run: should not create staging file
+        update(
+            &paths,
+            vec!["*@old.com".to_string()],
+            None,
+            None,
+            Some(vec!["@old.com".to_string(), "@new.com".to_string()]),
+            false, // regex
+            false, // replace_first
+            true,  // dry_run
+            false, // apply
+        )
+        .expect("dry-run update should succeed");
+
+        assert!(
+            !paths.staging.exists(),
+            "staging should not be created in dry-run"
+        );
+
+        fs::remove_dir_all(tmp).unwrap();
+    }
+
+    #[test]
+    fn test_update_apply_succeeds_and_applies_staging() {
+        let tmp = setup_tmp();
+        let paths = build_paths(tmp.clone());
+
+        // Minimal config with one user
+        let cfg = serde_json::json!({
+            "inbounds": [
+                {
+                    "type": "vless",
+                    "users": [
+                        { "name": "bob@old.com:SID2:0", "uuid": "2222", "flow": "xtls" }
+                    ]
+                }
+            ]
+        });
+        fs::write(&paths.config, serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
+
+        // Create fake sing-box that returns 0 for check
+        let bin_dir = tmp.join("fakebin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let sing_box = bin_dir.join("sing-box");
+        fs::write(&sing_box, "#!/bin/sh\nexit 0\n").unwrap();
+        let mut perms = fs::metadata(&sing_box).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&sing_box, perms).unwrap();
+
+        // Sanity checks: ensure the fake sing-box script is present, executable, and exits as expected
+        assert!(
+            sing_box.exists(),
+            "fake sing-box script not found: {:?}",
+            sing_box
+        );
+        let status = std::process::Command::new(&sing_box)
+            .status()
+            .expect("failed to execute fake sing-box");
+        assert!(
+            status.success(),
+            "fake sing-box did not exit 0 as expected: {:?}",
+            status
+        );
+
+        // Use SING_BOX_BIN env (guarded)
+        let sing_box_path = sing_box.to_str().unwrap().to_string();
+        let guard = crate::utils::TEST_PATH_LOCK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap();
+        let old_sb = std::env::var("SING_BOX_BIN").ok();
+        unsafe {
+            std::env::set_var("SING_BOX_BIN", &sing_box_path);
+        }
+
+        // Run update with apply=true (should succeed and apply staged changes)
+        let res = update(
+            &paths,
+            vec!["*@old.com".to_string()],
+            None,
+            None,
+            Some(vec!["@old.com".to_string(), "@new.com".to_string()]),
+            false, // regex
+            false, // replace_first
+            false, // dry_run
+            true,  // apply
+        );
+
+        assert!(
+            res.is_ok(),
+            "update --apply should succeed when sing-box check returns 0"
+        );
+
+        // After apply, staging should be applied (moved to config)
+        assert!(
+            !paths.staging.exists(),
+            "staging should have been applied/moved"
+        );
+        let config_str = fs::read_to_string(&paths.config).unwrap();
+        assert!(
+            config_str.contains("bob@new.com"),
+            "config should contain updated email"
+        );
+
+        // Restore SING_BOX_BIN env and cleanup
+        unsafe {
+            if let Some(v) = old_sb {
+                std::env::set_var("SING_BOX_BIN", v);
+            } else {
+                std::env::remove_var("SING_BOX_BIN");
+            }
+        }
+        drop(guard);
+        fs::remove_dir_all(tmp).unwrap();
+    }
+
+    #[test]
+    fn test_update_apply_fails_on_singbox_check() {
+        let tmp = setup_tmp();
+        let paths = build_paths(tmp.clone());
+
+        let cfg = serde_json::json!({
+            "inbounds": [
+                {
+                    "type": "vless",
+                    "users": [
+                        { "name": "bob@old.com:SID2:0", "uuid": "2222", "flow": "xtls" }
+                    ]
+                }
+            ]
+        });
+        fs::write(&paths.config, serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
+
+        let bin_dir = tmp.join("fakebin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let sing_box = bin_dir.join("sing-box");
+        fs::write(&sing_box, "#!/bin/sh\nexit 2\n").unwrap();
+        let mut perms = fs::metadata(&sing_box).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&sing_box, perms).unwrap();
+
+        // Sanity checks: ensure the fake sing-box script is present, executable, and exits non-zero (expected)
+        assert!(
+            sing_box.exists(),
+            "fake sing-box script not found: {:?}",
+            sing_box
+        );
+        let status = std::process::Command::new(&sing_box)
+            .status()
+            .expect("failed to execute fake sing-box");
+        assert!(
+            !status.success(),
+            "fake sing-box unexpectedly exited 0; status: {:?}",
+            status
+        );
+
+        // Use SING_BOX_BIN env (guarded)
+        let sing_box_path = sing_box.to_str().unwrap().to_string();
+        let guard = crate::utils::TEST_PATH_LOCK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap();
+        let old_sb = std::env::var("SING_BOX_BIN").ok();
+        unsafe {
+            std::env::set_var("SING_BOX_BIN", &sing_box_path);
+        }
+
+        // Run update with apply=true (should fail because sing-box check exits non-zero)
+        let res = update(
+            &paths,
+            vec!["*@old.com".to_string()],
+            None,
+            None,
+            Some(vec!["@old.com".to_string(), "@new.com".to_string()]),
+            false, // regex
+            false, // replace_first
+            false, // dry_run
+            true,  // apply
+        );
+
+        assert!(
+            res.is_err(),
+            "update --apply should fail when sing-box check returns non-zero"
+        );
+        // staging should still exist (apply aborted)
+        assert!(
+            paths.staging.exists(),
+            "staging should remain when apply fails"
+        );
+
+        // Restore PATH and cleanup
+        // Restore SING_BOX_BIN env and cleanup
+        unsafe {
+            if let Some(v) = old_sb {
+                std::env::set_var("SING_BOX_BIN", v);
+            } else {
+                std::env::remove_var("SING_BOX_BIN");
+            }
+        }
+        drop(guard);
+        fs::remove_dir_all(tmp).unwrap();
     }
 }

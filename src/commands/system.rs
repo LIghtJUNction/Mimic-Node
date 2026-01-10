@@ -188,8 +188,10 @@ pub fn check(paths: &Paths) -> Result<()> {
 
     // Delegate entirely to sing-box's native check.
     // If sing-box accepts the configuration, we consider it valid.
-    eprintln!("{} Running 'sing-box check'...", "[INFO]".green());
-    let status = Command::new("sing-box")
+    // Allow overriding which binary to use via the SING_BOX_BIN env var (useful for tests).
+    let sing_box = std::env::var("SING_BOX_BIN").unwrap_or_else(|_| "sing-box".to_string());
+    eprintln!("{} Running '{} check'...", "[INFO]".green(), sing_box);
+    let status = Command::new(&sing_box)
         .args(["check", "-c", input_path.to_str().unwrap()])
         .status();
 
@@ -214,11 +216,12 @@ mod tests {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::Mutex;
     use uuid::Uuid;
 
-    // Global lock to serialize tests that modify PATH to avoid race conditions
-    static PATH_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    // Use the global test PATH lock defined in `utils` (under cfg(test)) to serialize tests
+    // that modify PATH. This avoids having multiple per-module locks which don't prevent
+    // races across test modules.
 
     fn setup_tmp() -> PathBuf {
         let base = std::env::temp_dir();
@@ -312,22 +315,46 @@ mod tests {
         perms.set_mode(0o755);
         fs::set_permissions(&sing_box, perms).unwrap();
 
-        // Prepend to PATH (guarded to prevent races with other tests)
-        let old_path = env::var("PATH").unwrap_or_default();
-        let new_path = format!("{}:{}", bin_dir.to_str().unwrap(), old_path);
-        // Acquire a global lock to avoid races with other tests that also set PATH
-        let _guard = PATH_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        // Sanity check: ensure the fake sing-box script exists, is executable, and exits 0
+        assert!(
+            sing_box.exists(),
+            "sing-box script not created: {:?}",
+            sing_box
+        );
+        let status = std::process::Command::new(&sing_box)
+            .status()
+            .expect("failed to execute fake sing-box");
+        assert!(
+            status.success(),
+            "fake sing-box did not exit 0 as expected: {:?}",
+            status
+        );
+
+        // Use SING_BOX_BIN env (guarded to avoid races with other tests that also set it)
+        let sing_box_path = sing_box.to_str().unwrap().to_string();
+        // Acquire the global test PATH lock from utils to avoid races with other tests that also set PATH
+        let _guard = crate::utils::TEST_PATH_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap();
+        let old_sing = env::var("SING_BOX_BIN").ok();
         unsafe {
-            env::set_var("PATH", &new_path);
+            std::env::set_var("SING_BOX_BIN", &sing_box_path);
         }
 
         // Call check
         let res = check(&paths);
         assert!(res.is_ok(), "check should succeed when sing-box returns 0");
 
-        // Restore PATH and cleanup
-        unsafe {
-            env::set_var("PATH", old_path);
+        // Restore SING_BOX_BIN env and cleanup
+        if let Some(v) = old_sing {
+            unsafe {
+                std::env::set_var("SING_BOX_BIN", v);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("SING_BOX_BIN");
+            }
         }
         drop(_guard);
         fs::remove_dir_all(tmp).unwrap();
@@ -348,12 +375,29 @@ mod tests {
         perms.set_mode(0o755);
         fs::set_permissions(&sing_box, perms).unwrap();
 
-        let old_path = env::var("PATH").unwrap_or_default();
-        let new_path = format!("{}:{}", bin_dir.to_str().unwrap(), old_path);
-        // Acquire a global lock to avoid races with other tests that also set PATH
-        let _guard = PATH_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        // Sanity check: ensure the fake sing-box script exists, is executable, and exits non-zero
+        assert!(
+            sing_box.exists(),
+            "sing-box script not created: {:?}",
+            sing_box
+        );
+        let status = std::process::Command::new(&sing_box)
+            .status()
+            .expect("failed to execute fake sing-box");
+        assert!(
+            !status.success(),
+            "fake sing-box unexpectedly exited 0; status: {:?}",
+            status
+        );
+
+        // Acquire the global test PATH lock from utils to avoid races with other tests that also set PATH
+        let _guard = crate::utils::TEST_PATH_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap();
+        let old_sing = std::env::var("SING_BOX_BIN").ok();
         unsafe {
-            env::set_var("PATH", &new_path);
+            std::env::set_var("SING_BOX_BIN", sing_box.to_str().unwrap());
         }
 
         let res = check(&paths);
@@ -362,8 +406,15 @@ mod tests {
             "check should fail when sing-box exits non-zero"
         );
 
-        unsafe {
-            env::set_var("PATH", old_path);
+        // Restore SING_BOX_BIN env and cleanup
+        if let Some(v) = old_sing {
+            unsafe {
+                std::env::set_var("SING_BOX_BIN", v);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("SING_BOX_BIN");
+            }
         }
         drop(_guard);
         fs::remove_dir_all(tmp).unwrap();
