@@ -45,6 +45,11 @@ yay -S mimic-node-git
 
 # 或者使用 paru 安装
 paru -S mimic-node-git
+
+# 半自动安装脚本
+
+
+
 ```
 
 特别注意⚠️：
