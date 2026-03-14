@@ -1,12 +1,12 @@
 [Unit]
-Description=Mimic-Node Auto Maintenance (SNI Rotation & Config Apply)
+Description=Mimic-Node Auto Maintenance
 Requires=mimic-node-mount.service
 After=network-online.target mimic-node-mount.service
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/mimictl sni && /usr/bin/mimictl apply
+ExecStart=/usr/bin/mimictl apply
 
 [Install]
 WantedBy=multi-user.target
