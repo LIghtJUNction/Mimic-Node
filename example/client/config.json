@@ -1,0 +1,180 @@
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "tag": "dns_proxy",
+        "address": "https://8.8.8.8/dns-query",
+        "detour": "节点选择"
+      },
+      {
+        "tag": "dns_direct",
+        "address": "223.5.5.5",
+        "detour": "direct"
+      }
+    ],
+    "rules": [
+      {
+        "rule_set": "geosite-cn",
+        "server": "dns_direct"
+      },
+      {
+        "domain": [
+          "DOMAIN_EXTERNAL_DNS_RESOLVER",
+          "raw.githubusercontent.com",
+          "github.com"
+        ],
+        "server": "dns_direct"
+      }
+    ],
+    "final": "dns_proxy",
+    "strategy": "prefer_ipv4"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "mtu": 1400,
+      "address": [
+        "172.16.0.1/30",
+        "fd00::1/126"
+      ],
+      "auto_route": true,
+      "strict_route": true,
+      "stack": "mixed",
+      "sniff": true,
+      "sniff_override_destination": true
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "selector",
+      "tag": "节点选择",
+      "outbounds": [
+        "自动选择",
+        "V6-Reality-Node",
+        "V4-Reality-Node"
+      ]
+    },
+    {
+      "type": "urltest",
+      "tag": "自动选择",
+      "outbounds": [
+        "V6-Reality-Node",
+        "V4-Reality-Node"
+      ],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": "3m0s"
+    },
+    {
+      "type": "vless",
+      "tag": "V6-Reality-Node",
+      "server": "YOUR_IPV6_ADDRESS",
+      "server_port": 443,
+      "uuid": "YOUR_UUID",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "SNI_FOR_REALITY",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "YOUR_PUBLIC_KEY",
+          "short_id": "YOUR_SHORT_ID"
+        }
+      },
+      "packet_encoding": "xudp"
+    },
+    {
+      "type": "vless",
+      "tag": "V4-Reality-Node",
+      "server": "YOUR_IPV4_ADDRESS",
+      "server_port": 443,
+      "uuid": "YOUR_UUID",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "SNI_FOR_REALITY",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "YOUR_PUBLIC_KEY",
+          "short_id": "YOUR_SHORT_ID"
+        }
+      },
+      "packet_encoding": "xudp"
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "process_name": "sing-box",
+        "action": "direct"
+      },
+      {
+        "ip_is_private": true,
+        "action": "direct"
+      },
+      {
+        "rule_set": [
+          "geosite-cn",
+          "geoip-cn"
+        ],
+        "action": "direct"
+      },
+      {
+        "protocol": [
+          "bittorrent",
+          "quic"
+        ],
+        "action": "reject",
+        "method": "drop"
+      }
+    ],
+    "rule_set": [
+      {
+        "type": "remote",
+        "tag": "geoip-cn",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo-lite/geoip/cn.srs",
+        "download_detour": "direct"
+      },
+      {
+        "type": "remote",
+        "tag": "geosite-cn",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo-lite/geosite/cn.srs",
+        "download_detour": "direct"
+      }
+    ],
+    "final": "节点选择",
+    "auto_detect_interface": true
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "cache.db"
+    }
+  }
+}
