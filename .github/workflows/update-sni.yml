@@ -36,12 +36,18 @@ jobs:
 
       - name: Run SNI domain fetcher
         id: fetch
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
         run: |
           python scripts/fetch-sni-domains.py \
             --max-domains ${{ inputs.max_domains || '500' }} \
             --threads 30 \
-            --output sni.txt \
-            --verbose
+            --output sni.txt
+
+      - name: Check output file
+        run: |
+          ls -la sni.txt 2>/dev/null || echo "sni.txt NOT FOUND"
+          head -20 sni.txt 2>/dev/null || echo "Cannot read sni.txt"
 
       - name: Count domains
         id: count
@@ -101,7 +107,7 @@ jobs:
 
       - name: Upload release artifact
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: sni-domains-${{ steps.date.outputs.release_date }}
           path: sni.txt
