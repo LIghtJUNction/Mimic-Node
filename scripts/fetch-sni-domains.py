@@ -40,69 +40,37 @@ DOMAIN_SOURCES = [
 ]
 
 # Additional hardcoded high-quality domains (always tested first)
+# Criteria: International large sites + accessible from mainland China
+# 符合条件：Apple, Microsoft, Amazon, Cloudflare, PayPal, Shopify, Slack, Zoom, etc.
 EXTRA_DOMAINS = """swdist.apple.com
-www.microsoft.com
-www.google.com
-www.cloudflare.com
-www.amazon.com
 www.apple.com
-www.facebook.com
-www.instagram.com
-www.twitter.com
-www.youtube.com
-www.reddit.com
-www.netflix.com
-www.spotify.com
-www.telegram.org
-github.com
-www.github.com
-www.linkedin.com
+www.icloud.com
 www.microsoft.com
-login.live.com
-www.bing.com
 www.office.com
 www.outlook.com
-www.skype.com
-www.teams.microsoft.com
+login.live.com
+www.bing.com
 www.visualstudio.com
 code.visualstudio.com
-www.stackoverflow.com
-www.npmjs.com
-www.docker.com
-www.kubernetes.io
-www.terraform.io
-www.jenkins.io
-www.atlassian.com
+www.amazonaws.com
+signin.aws.amazon.com
+portal.azure.com
+cloud.google.com
+www.cloudflare.com
+www.amazon.com
+www.paypal.com
+www.shopify.com
 www.slack.com
 www.zoom.us
 www.dropbox.com
 www.box.com
+www.atlassian.com
 www.salesforce.com
-www.zendesk.com
-www.shopify.com
+www.skyscanner.net
+www.booking.com
 www.stripe.com
-www.paypal.com
 www.ebay.com
-www.aliexpress.com
-www.taobao.com
-www.baidu.com
-www.aliyun.com
-www.tencent.com
-www.qq.com
-www.weibo.com
-www.douban.com
-www.zhihu.com
-www.bilibili.com
-www.icloud.com
-www.micloud.com
-www.xiaomi.com
-www.huawei.com
-www.oppo.com
-www.vivo.com
-www.oneplus.com
-www.realme.com
-www.mi.com
-www.redmi.com
+www.reddit.com
 """
 
 # TLDs to exclude (China-based or problematic)
@@ -135,57 +103,52 @@ EXCLUDE_KEYWORDS = {
 
 # Known good domains by region (prioritized by server location awareness)
 # Format: (domain, region_hint) where region_hint is one of: us, eu, ap, global
+# Criteria: International large sites + accessible from mainland China
 KNOWN_GOOD = {
-    # Global CDNs (always good regardless of location)
+    # Apple (global)
     ('swdist.apple.com', 'global'),
-    ('www.microsoft.com', 'us'),
-    ('www.google.com', 'global'),
+    ('www.apple.com', 'global'),
+    ('www.icloud.com', 'global'),
+    # Microsoft (global)
+    ('www.microsoft.com', 'global'),
+    ('www.office.com', 'global'),
+    ('www.outlook.com', 'global'),
+    ('login.live.com', 'global'),
+    ('www.bing.com', 'global'),
+    ('www.visualstudio.com', 'global'),
+    ('code.visualstudio.com', 'global'),
+    # AWS/Azure/GCP (global)
+    ('www.amazonaws.com', 'global'),
+    ('signin.aws.amazon.com', 'global'),
+    ('portal.azure.com', 'global'),
+    ('cloud.google.com', 'global'),
+    # Cloudflare (global)
     ('www.cloudflare.com', 'global'),
-    ('www.amazon.com', 'us'),
-    ('www.apple.com', 'us'),
-    ('www.facebook.com', 'us'),
-    ('www.instagram.com', 'us'),
-    ('www.twitter.com', 'us'),
-    ('www.youtube.com', 'us'),
-    ('www.reddit.com', 'us'),
-    ('www.netflix.com', 'us'),
-    ('www.spotify.com', 'eu'),
-    ('www.telegram.org', 'eu'),
-    ('github.com', 'us'),
-    ('www.github.com', 'us'),
-    ('www.linkedin.com', 'us'),
-    ('login.live.com', 'us'),
-    ('www.bing.com', 'us'),
-    ('www.office.com', 'us'),
-    ('www.outlook.com', 'us'),
-    ('www.teams.microsoft.com', 'us'),
-    ('code.visualstudio.com', 'us'),
-    ('www.visualstudio.com', 'us'),
-    # US-focused
-    ('www.icloud.com', 'us'),
-    ('www.dropbox.com', 'us'),
-    ('www.box.com', 'us'),
-    ('www.paypal.com', 'us'),
-    ('www.stripe.com', 'us'),
-    ('www.shopify.com', 'us'),
-    ('www.slack.com', 'us'),
-    ('www.zoom.us', 'us'),
-    ('www.atlassian.com', 'us'),
-    ('www.salesforce.com', 'us'),
+    # Amazon (global)
+    ('www.amazon.com', 'global'),
+    # PayPal (global)
+    ('www.paypal.com', 'global'),
+    # Shopify (global)
+    ('www.shopify.com', 'global'),
+    # Slack (global)
+    ('www.slack.com', 'global'),
+    # Zoom (global)
+    ('www.zoom.us', 'global'),
+    # Dropbox (global)
+    ('www.dropbox.com', 'global'),
+    # Box (global)
+    ('www.box.com', 'global'),
+    # Atlassian (global)
+    ('www.atlassian.com', 'global'),
+    # Salesforce (global)
+    ('www.salesforce.com', 'global'),
     # EU-focused
-    ('www.spotify.com', 'eu'),
     ('www.skyscanner.net', 'eu'),
     ('www.booking.com', 'eu'),
-    # Asia-Pacific (Japan, Korea, Singapore)
-    ('www.line.me', 'ap'),
-    ('www.playstation.com', 'us'),
-    ('www.nintendo.com', 'us'),
-    # AWS/Azure/GCP CDNs (global)
-    ('www.amazonaws.com', 'us'),
-    ('signin.aws.amazon.com', 'us'),
-    ('portal.azure.com', 'us'),
-    ('cloud.google.com', 'us'),
-    ('www.cloud.google.com', 'us'),
+    # Stripe (global)
+    ('www.stripe.com', 'global'),
+    # Reddit (global - though partially blocked)
+    ('www.reddit.com', 'global'),
 }
 
 
@@ -422,21 +385,6 @@ def main():
     extra_domains = load_extra_domains()
     all_domains.update(extra_domains)
     print(f"  Total unique domains collected: {len(all_domains)}")
-
-    # Get latest release tag and build URLs
-    tag = get_latest_release_tag()
-    print(f"  Using Loyalsoldier release tag: {tag}")
-
-    sources = [
-        f"https://github.com/Loyalsoldier/v2ray-rules-dat/releases/download/{tag}/gfw.txt",
-        f"https://github.com/Loyalsoldier/v2ray-rules-dat/releases/download/{tag}/proxy-list.txt",
-    ]
-
-    for url in sources:
-        domains = fetch_domain_list(url)
-        all_domains.update(domains)
-        if args.verbose:
-            print(f"    Found {len(domains)} domains from {url.split('/')[-1]}")
 
     print(f"  Total unique domains after fetching: {len(all_domains)}")
 
