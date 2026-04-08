@@ -51,7 +51,6 @@ jobs:
           echo "domain_count=$lines" >> $GITHUB_OUTPUT
 
       - name: Create or update PR
-        if: github.event_name == 'workflow_dispatch'
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -63,8 +62,6 @@ jobs:
             Auto-generated SNI domain list update.
 
             **Domains found:** ${{ steps.count.outputs.domain_count }}
-
-            This PR was triggered manually.
           branch: chore/update-sni-list
           delete-branch: true
           add-paths: |
