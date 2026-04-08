@@ -164,6 +164,321 @@ pub fn reset(paths: &Paths, keep_users_emails: Vec<String>) -> Result<()> {
     Ok(())
 }
 
+/// Represents a single difference between two JSON values
+#[derive(Debug, Clone)]
+pub enum DiffEntry {
+    Added { path: String, value: serde_json::Value },
+    Removed { path: String, value: serde_json::Value },
+    Modified { path: String, old_value: serde_json::Value, new_value: serde_json::Value },
+}
+
+/// Recursively collect all differences between two JSON objects
+fn collect_diffs(path: &str, old_val: &serde_json::Value, new_val: &serde_json::Value, diffs: &mut Vec<DiffEntry>) {
+    use serde_json::Value;
+
+    let path_string: String = path.to_string();
+
+    match (old_val, new_val) {
+        (serde_json::Value::Object(old_map), serde_json::Value::Object(new_map)) => {
+            // Check for added keys
+            for (key, new_v) in new_map {
+                let new_path: String = if path_string.is_empty() {
+                    (*key).clone()
+                } else {
+                    format!("{}.{}", path_string, key)
+                };
+                if !old_map.contains_key(key) {
+                    let val_to_add: serde_json::Value = (*new_v).clone();
+                    diffs.push(DiffEntry::Added { path: new_path, value: val_to_add });
+                }
+            }
+            // Check for removed keys
+            for (key, old_v) in old_map {
+                let new_path: String = if path_string.is_empty() {
+                    (*key).clone()
+                } else {
+                    format!("{}.{}", path_string, key)
+                };
+                if !new_map.contains_key(key) {
+                    let val_to_remove: serde_json::Value = (*old_v).clone();
+                    diffs.push(DiffEntry::Removed { path: new_path, value: val_to_remove });
+                }
+            }
+            // Check for modified keys (recurse)
+            for (key, old_v) in old_map {
+                if let Some(new_v) = new_map.get(key) {
+                    let new_path: String = if path_string.is_empty() {
+                        (*key).clone()
+                    } else {
+                        format!("{}.{}", path_string, key)
+                    };
+                    collect_diffs(&new_path, old_v, new_v, diffs);
+                }
+            }
+        }
+        (serde_json::Value::Array(old_arr), serde_json::Value::Array(new_arr)) => {
+            // For arrays, compare element by element up to min length, then handle rest
+            let min_len = old_arr.len().min(new_arr.len());
+            for i in 0..min_len {
+                let new_path = format!("{}[{}]", path_string, i);
+                collect_diffs(&new_path, &old_arr[i], &new_arr[i], diffs);
+            }
+            // Handle length differences
+            for i in min_len..new_arr.len() {
+                let new_path = format!("{}[{}]", path_string, i);
+                diffs.push(DiffEntry::Added { path: new_path, value: new_arr[i].clone() as serde_json::Value });
+            }
+            for i in min_len..old_arr.len() {
+                let new_path = format!("{}[{}]", path_string, i);
+                diffs.push(DiffEntry::Removed { path: new_path, value: old_arr[i].clone() as serde_json::Value });
+            }
+        }
+        _ => {
+            // Primitive values - check if different
+            if old_val != new_val {
+                diffs.push(DiffEntry::Modified {
+                    path: path.to_string(),
+                    old_value: old_val.clone(),
+                    new_value: new_val.clone(),
+                });
+            }
+        }
+    }
+}
+
+/// Apply a single diff entry to a JSON value
+fn apply_diff(value: &mut serde_json::Value, diff: &DiffEntry) {
+    // Helper to extract key from path segment (handles array indices like "users[0]")
+    fn extract_key(segment: &str) -> String {
+        let segment = segment.trim();
+        if segment.is_empty() {
+            return String::new();
+        }
+        // Handle array notation: "key[0]" -> "key"
+        if let Some(idx) = segment.find('[') {
+            segment[..idx].to_string()
+        } else {
+            segment.to_string()
+        }
+    }
+
+    // Navigate to nested value using pointer manipulation
+    fn navigate_to<'a>(value: &'a mut serde_json::Value, path: &str) -> Option<&'a mut serde_json::Value> {
+        let parts: Vec<&str> = path.split('.').collect();
+        if parts.is_empty() {
+            return None;
+        }
+        if parts.len() == 1 {
+            return Some(value);
+        }
+
+        // For nested paths, we need to traverse using indices
+        let mut current = value as *mut serde_json::Value;
+        for part in &parts[..parts.len()-1] {
+            let key = extract_key(part);
+            if key.is_empty() {
+                return None;
+            }
+            // SAFETY: We have exclusive ownership through the pointer and only use it
+            // within this function's lifetime. The parent reference ensures the chain is valid.
+            unsafe {
+                if let serde_json::Value::Object(m) = &mut *current {
+                    if let Some(next) = m.get_mut(&key) {
+                        current = next as *mut serde_json::Value;
+                    } else {
+                        return None;
+                    }
+                } else {
+                    return None;
+                }
+            }
+        }
+        // SAFETY: Same reasoning as above
+        unsafe {
+            Some(&mut *current)
+        }
+    }
+
+    match diff {
+        DiffEntry::Added { path, value: new_val } => {
+            let parts: Vec<&str> = path.split('.').collect();
+            if parts.is_empty() {
+                return;
+            }
+
+            let final_key = extract_key(parts[parts.len()-1]);
+            if final_key.is_empty() {
+                return;
+            }
+
+            if parts.len() == 1 {
+                if let serde_json::Value::Object(m) = value {
+                    m.insert(final_key, new_val.clone());
+                }
+            } else {
+                let parent_path = parts[..parts.len()-1].join(".");
+                if let Some(parent) = navigate_to(value, &parent_path) {
+                    if let serde_json::Value::Object(m) = parent {
+                        m.insert(final_key, new_val.clone());
+                    }
+                }
+            }
+        }
+        DiffEntry::Removed { path, .. } => {
+            let parts: Vec<&str> = path.split('.').collect();
+            if parts.is_empty() {
+                return;
+            }
+
+            let final_key = extract_key(parts[parts.len()-1]);
+            if final_key.is_empty() {
+                return;
+            }
+
+            if parts.len() == 1 {
+                if let serde_json::Value::Object(m) = value {
+                    m.remove(&final_key);
+                }
+            } else {
+                let parent_path = parts[..parts.len()-1].join(".");
+                if let Some(parent) = navigate_to(value, &parent_path) {
+                    if let serde_json::Value::Object(m) = parent {
+                        m.remove(&final_key);
+                    }
+                }
+            }
+        }
+        DiffEntry::Modified { path, new_value, .. } => {
+            let parts: Vec<&str> = path.split('.').collect();
+            if parts.is_empty() {
+                return;
+            }
+
+            let final_key = extract_key(parts[parts.len()-1]);
+            if final_key.is_empty() {
+                return;
+            }
+
+            if parts.len() == 1 {
+                if let serde_json::Value::Object(m) = value {
+                    m.insert(final_key, new_value.clone());
+                }
+            } else {
+                let parent_path = parts[..parts.len()-1].join(".");
+                if let Some(parent) = navigate_to(value, &parent_path) {
+                    if let serde_json::Value::Object(m) = parent {
+                        m.insert(final_key, new_value.clone());
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn diff(paths: &Paths) -> Result<()> {
+    use std::io::Write;
+    use serde_json::Value;
+
+    // Load configs as JSON Values
+    let current_json: Value = if paths.config.exists() {
+        serde_json::from_str(&fs::read_to_string(&paths.config)?)?
+    } else {
+        serde_json::json!({})
+    };
+
+    let default_json: Value = if paths.default_config.exists() {
+        serde_json::from_str(&fs::read_to_string(&paths.default_config)?)?
+    } else {
+        serde_json::json!({})
+    };
+
+    // Collect all differences
+    let mut diffs = Vec::new();
+    collect_diffs("", &current_json, &default_json, &mut diffs);
+
+    if diffs.is_empty() {
+        eprintln!("{} No differences found between current and default config.", "[INFO]".green());
+        return Ok(());
+    }
+
+    eprintln!("{} Found {} difference(s) between current and default config:", "[INFO]".green(), diffs.len());
+    eprintln!();
+
+    let mut to_apply = Vec::new();
+
+    for (i, diff) in diffs.iter().enumerate() {
+        match diff {
+            DiffEntry::Added { path, value } => {
+                println!("{}. [ADDED] {}", i + 1, path);
+                println!("    Value: {}", serde_json::to_string_pretty(value).unwrap_or_default());
+            }
+            DiffEntry::Removed { path, value } => {
+                println!("{}. [REMOVED] {}", i + 1, path);
+                println!("    Value: {}", serde_json::to_string_pretty(value).unwrap_or_default());
+            }
+            DiffEntry::Modified { path, old_value, new_value } => {
+                println!("{}. [MODIFIED] {}", i + 1, path);
+                println!("    Old: {}", serde_json::to_string_pretty(old_value).unwrap_or_default());
+                println!("    New: {}", serde_json::to_string_pretty(new_value).unwrap_or_default());
+            }
+        }
+        eprintln!();
+
+        // Interactive prompt
+        loop {
+            print!("Apply this change? [y/n/a/q] (y=yes, n=no, a=all, q=quit): ");
+            std::io::stdout().flush()?;
+
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            let input = input.trim().to_lowercase();
+
+            match input.as_str() {
+                "y" | "yes" => {
+                    to_apply.push(diff.clone());
+                    break;
+                }
+                "n" | "no" => {
+                    break;
+                }
+                "a" | "all" => {
+                    // Apply all remaining diffs without asking
+                    for d in diffs[i..].to_vec() {
+                        to_apply.push(d);
+                    }
+                    eprintln!("{} Applying all remaining changes...", "[INFO]".green());
+                    break;
+                }
+                "q" | "quit" => {
+                    eprintln!("{} Quitting. No changes applied.", "[WARN]".yellow());
+                    return Ok(());
+                }
+                _ => {
+                    eprintln!("{} Invalid input. Please enter y, n, a, or q.", "[WARN]".yellow());
+                }
+            }
+        }
+    }
+
+    if to_apply.is_empty() {
+        eprintln!("{} No changes selected to apply.", "[INFO]".green());
+        return Ok(());
+    }
+
+    // Apply selected diffs to a copy of current config
+    let mut new_config = current_json.clone();
+    for diff in &to_apply {
+        apply_diff(&mut new_config, diff);
+    }
+
+    // Save to staging
+    save_config(&paths.staging, &serde_json::from_value(new_config)?)?;
+
+    eprintln!("{} Applied {} change(s) to staging. Run 'mimictl apply' to activate.", "[INFO]".green(), to_apply.len());
+
+    Ok(())
+}
+
 pub fn show(paths: &Paths) -> Result<()> {
     eprintln!("Config ({:?}):", paths.config);
     if paths.config.exists() {

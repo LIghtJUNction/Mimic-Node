@@ -14,6 +14,85 @@ use url::Url;
 use crate::paths::Paths;
 use crate::utils::{load_config, save_config};
 
+// Known good domains with region hints for prioritization
+// Format: (domain, region) where region is "us", "eu", "ap", or "global"
+const KNOWN_GOOD_DOMAINS: &[(&str, &str)] = &[
+    // Global CDNs (work well from anywhere)
+    ("swdist.apple.com", "global"),
+    ("www.microsoft.com", "us"),
+    ("www.google.com", "global"),
+    ("www.cloudflare.com", "global"),
+    ("www.amazon.com", "us"),
+    ("www.apple.com", "us"),
+    ("www.facebook.com", "us"),
+    ("www.instagram.com", "us"),
+    ("www.twitter.com", "us"),
+    ("www.youtube.com", "us"),
+    ("www.reddit.com", "us"),
+    ("www.netflix.com", "us"),
+    ("www.spotify.com", "eu"),
+    ("www.telegram.org", "eu"),
+    ("github.com", "us"),
+    ("www.github.com", "us"),
+    ("www.linkedin.com", "us"),
+    ("login.live.com", "us"),
+    ("www.bing.com", "us"),
+    ("www.office.com", "us"),
+    ("www.outlook.com", "us"),
+    ("www.teams.microsoft.com", "us"),
+    ("code.visualstudio.com", "us"),
+    ("www.visualstudio.com", "us"),
+    ("www.icloud.com", "us"),
+    ("www.dropbox.com", "us"),
+    ("www.box.com", "us"),
+    ("www.paypal.com", "us"),
+    ("www.stripe.com", "us"),
+    ("www.shopify.com", "us"),
+    ("www.slack.com", "us"),
+    ("www.zoom.us", "us"),
+    ("www.atlassian.com", "us"),
+    ("www.salesforce.com", "us"),
+    ("www.speedtest.net", "global"),
+    ("www.cloudflare.com", "global"),
+    ("www.cloudfront.com", "us"),
+    ("signin.aws.amazon.com", "us"),
+    ("portal.azure.com", "us"),
+    ("cloud.google.com", "us"),
+];
+
+// Detect server region by querying IP geolocation
+fn detect_server_region() -> String {
+    // Use curl to call ipapi.co since we're already using Command for openssl
+    let output = Command::new("sh")
+        .args([
+            "-c",
+            "curl -s 'https://ipapi.co/json/' 2>/dev/null | grep country_code | head -1 | awk -F'\"' '{print $4}'",
+        ])
+        .output();
+
+    let country = match output {
+        Ok(o) if o.status.success() => {
+            String::from_utf8_lossy(&o.stdout).trim().to_string()
+        }
+        _ => String::new(),
+    };
+
+    if country.is_empty() {
+        return "unknown".to_string();
+    }
+
+    // Map country to region
+    let region = match country.as_str() {
+        "US" | "CA" | "MX" | "PR" | "CR" | "PA" | "GT" | "HN" | "NI" | "SV" | "BZ" | "BS" | "CU" | "JM" | "HT" | "DO" | "TT" => "us",
+        "GB" | "DE" | "FR" | "NL" | "SE" | "NO" | "DK" | "FI" | "PL" | "IT" | "ES" | "PT" | "BE" | "AT" | "CH" | "IE" | "CZ" | "HU" | "RO" | "BG" | "GR" | "SK" | "LT" | "LV" | "EE" => "eu",
+        "JP" | "KR" | "SG" | "HK" | "TW" | "AU" | "NZ" | "IN" | "TH" | "VN" | "MY" | "PH" | "ID" | "PK" | "BD" | "LK" | "NP" | "MM" | "KH" | "LA" | "BN" | "TL" => "ap",
+        "CN" => "cn",
+        _ => "unknown",
+    };
+
+    region.to_string()
+}
+
 pub async fn sni(
     paths: &Paths,
     target_sni: Option<String>,
@@ -35,6 +114,12 @@ pub async fn sni(
         if !sni_path.exists() {
             return Err(anyhow!("SNI list file not found: {:?}", sni_path));
         }
+
+        // Detect server region first
+        eprintln!("{} Detecting server region...", "[INFO]".green());
+        let region_str = detect_server_region();
+        eprintln!("{} Server region: {}", "[INFO]".green(), region_str.to_uppercase());
+
         eprintln!(
             "{} Auto-detecting best SNI from {:?}...",
             "[INFO]".green(),
@@ -54,63 +139,65 @@ pub async fn sni(
             candidates.push(trimmed.to_string());
         }
 
-        let mut best_fallback = None;
+        // Build prioritized candidates: known good (region-matched) first, then rest
+        let mut prioritized_candidates = Vec::new();
+
+        // First: known good domains matching server region or global
+        for (domain, region) in KNOWN_GOOD_DOMAINS {
+            if *region == region_str || *region == "global" {
+                if candidates.contains(&domain.to_string()) {
+                    prioritized_candidates.push(domain.to_string());
+                }
+            }
+        }
+
+        // Then: all other candidates not already added
+        for cand in &candidates {
+            if !prioritized_candidates.contains(cand) {
+                prioritized_candidates.push(cand.clone());
+            }
+        }
+
         let mut found_perfect = None;
 
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(2))
             .build()?;
 
-        // Sequential scan for now to mimic shell script logic and progress bar
+        // Sequential scan with progress indicator
         let mut count = 0;
-        for cand in candidates {
+        let total = prioritized_candidates.len();
+        for cand in prioritized_candidates {
             count += 1;
-            if count % 5 == 0 {
-                eprint!(".");
+            if count % 5 == 0 || count == 1 {
+                eprint!("\r  Testing: {}/{} | Compatible found: {}  ", count, total, found_perfect.is_some());
             }
 
             let url = format!("https://{}", cand);
 
-            // 1. Connectivity Check (IPv4 preferred)
-            // Reqwest uses system resolver. To force IPv4, we'd need a custom connector.
-            // For simplicity, we just try HEAD.
+            // 1. Connectivity Check
             let resp = client.head(&url).send().await;
-
             if resp.is_err() {
                 continue;
             }
 
-            // 2. Reality check using sing-box (allow override via SING_BOX_BIN)
-            let sing_box = std::env::var("SING_BOX_BIN").unwrap_or_else(|_| "sing-box".to_string());
-            let sing_box_check = Command::new(&sing_box)
-                .args(["check", "reality-dest", &format!("{}:443", cand)])
+            // 2. Reality check using openssl (check TLS 1.3 + ALPN for HTTP/2)
+            let openssl_check = Command::new("sh")
+                .args([
+                    "-c",
+                    &format!(
+                        "echo | openssl s_client -connect {}:443 -alpn h2 -tls1_3 2>&1 | grep -i 'ALPN protocol: h2'",
+                        cand
+                    ),
+                ])
                 .output();
 
-            if let Ok(output) = sing_box_check
+            if let Ok(output) = openssl_check
                 && output.status.success()
             {
-                eprintln!("\n{} Found perfect match: {}", "[INFO]".green(), cand);
-                found_perfect = Some(cand);
-                break;
-            }
-
-            // 3. Fallback H2 check
-            // Since we configured client with http2_prior_knowledge/support, we can check version?
-            // Actually, for a real H2 check on HTTPS, we need ALPN. reqwest supports it by default.
-            if best_fallback.is_none()
-                && let Ok(response) = resp
-                && response.version() == reqwest::Version::HTTP_2
-            {
-                best_fallback = Some(cand.clone());
-                // If no sing-box available, stop here
-                let sing_box =
-                    std::env::var("SING_BOX_BIN").unwrap_or_else(|_| "sing-box".to_string());
-                if Command::new(&sing_box).arg("version").output().is_err() {
-                    eprintln!(
-                        "\n{} Selected SNI (H2 supported): {}",
-                        "[INFO]".green(),
-                        cand
-                    );
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if stdout.to_lowercase().contains("alpn protocol: h2") {
+                    eprintln!("\r{} Found perfect match: {} (region: {})", "[INFO]".green(), cand, region_str.to_uppercase());
                     found_perfect = Some(cand);
                     break;
                 }
@@ -120,15 +207,11 @@ pub async fn sni(
 
         if let Some(p) = found_perfect {
             sni_to_set = p;
-        } else if let Some(f) = best_fallback {
-            eprintln!(
-                "{} No perfect Reality match found. Using fallback (H2 supported): {}",
-                "[WARN]".yellow(),
-                f
-            );
-            sni_to_set = f;
         } else {
-            return Err(anyhow!("No reachable SNI found in candidates list."));
+            return Err(anyhow!(
+                "No perfect Reality match found in candidates list. \
+                Run 'mimictl sni <domain>' to set SNI manually."
+            ));
         }
     }
 

@@ -222,6 +222,9 @@ pub enum Commands {
     /// Show current config and PUBKEY
     Show,
 
+    /// Show diff between current and default config, apply changes interactively
+    Diff,
+
     /// Apply staged config to running system
     Apply,
 

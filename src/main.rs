@@ -91,6 +91,7 @@ async fn main() -> Result<()> {
         Commands::List { filter, json } => commands::user::list(&paths, filter, json)?,
         Commands::Info { targets, json } => commands::user::info(&paths, targets, json)?,
         Commands::Show => commands::system::show(&paths)?,
+        Commands::Diff => commands::system::diff(&paths)?,
         Commands::Apply => commands::system::apply(&paths)?,
         Commands::Check => commands::system::check(&paths)?,
         Commands::Verify {
