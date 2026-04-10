@@ -14,6 +14,68 @@ import argparse
 import json
 import time
 
+
+# ─── Clash Ruleset China-Proxy Filter ───────────────────────────────
+
+# Download the full proxy/domain rules and exclude domains explicitly marked PROXY
+CLASH_PROXY_RULES_URL = "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt"
+
+# Cache for loaded rules (load once per run)
+_cached_proxy_domains: Optional[Set[str]] = None
+
+
+def is_explicitly_proxied(domain: str) -> bool:
+    """
+    Check if domain is explicitly in the PROXY list (requires proxy in China).
+    Returns True if domain is known to be blocked/requires proxy.
+    Returns False if domain is not in proxy list (either DIRECT or unlisted).
+    """
+    global _cached_proxy_domains
+
+    if _cached_proxy_domains is None:
+        _cached_proxy_domains = _load_clash_proxy_rules()
+
+    domain_lower = domain.lower()
+
+    # Exact match
+    if domain_lower in _cached_proxy_domains:
+        return True
+
+    # Suffix match
+    for rule in _cached_proxy_domains:
+        if rule.startswith('DOMAIN-SUFFIX:'):
+            suffix = rule.split(':', 1)[1].lower()
+            if domain_lower == suffix or domain_lower.endswith('.' + suffix):
+                return True
+        elif rule.startswith('DOMAIN:'):
+            d = rule.split(':', 1)[1].lower()
+            if domain_lower == d:
+                return True
+
+    return False
+
+
+def _load_clash_proxy_rules() -> Set[str]:
+    """Download and cache Loyalsoldier clash proxy rules."""
+    rules = set()
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            CLASH_PROXY_RULES_URL,
+            headers={'User-Agent': 'Mozilla/5.0'}
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            content = resp.read().decode('utf-8', errors='ignore')
+            for line in content.split('\n'):
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    rules.add(line)
+        print(f"  Loaded {len(rules)} proxy rules from clash-rules")
+    except Exception as e:
+        print(f"  Warning: failed to load clash proxy rules: {e}")
+    return rules
+
+
 # Domain sources - from Loyalsoldier's v2ray-rules-dat releases
 # These are in the release assets, not the repo
 
@@ -595,6 +657,8 @@ def main():
                         help='Minimum domain valuation (USD) to include (default: 100)')
     parser.add_argument('--max-val-domains', type=int, default=200,
                         help='Max domains to send for valuation (default: 200)')
+    parser.add_argument('--skip-china-filter', action='store_true',
+                        help='Skip Clash ruleset China-accessibility filter')
     args = parser.parse_args()
 
     print("=" * 60)
@@ -692,7 +756,22 @@ def main():
     print()
     print()
 
-    # Step 4: Domain valuation
+    # Step 4: Clash ruleset China-proxy filter
+    # Exclude domains explicitly in PROXY list (known blocked in China).
+    # Keep domains that are DIRECT or unlisted (not confirmed blocked).
+    if not compatible_domains:
+        china_ok_domains = []
+    elif getattr(args, 'skip_china_filter', False):
+        china_ok_domains = compatible_domains
+        print("[4/6] Clash proxy filter skipped (--skip-china-filter)")
+    else:
+        print("[4/6] Filtering via Loyalsoldier clash-rules (exclude PROXY list)...")
+        proxied = [d for d in compatible_domains if is_explicitly_proxied(d)]
+        china_ok_domains = [d for d in compatible_domains if not is_explicitly_proxied(d)]
+        print(f"  Explicitly PROXY (excluded): {len(proxied)}")
+        print(f"  Kept (not in proxy list): {len(china_ok_domains)}")
+
+    # Step 5: Domain valuation
     # Get API keys from environment; graceful no-op if not set
     replicate_token = os.environ.get('REPLICATE_API_TOKEN', '')
     domainindex_key = os.environ.get('DOMAININDEX_API_KEY', '')
@@ -701,17 +780,17 @@ def main():
     max_val_budget = getattr(args, 'max_val_domains', 200)
 
     if not replicate_token and not domainindex_key:
-        print("[4/6] Domain valuation skipped (no API keys set)")
+        print("[5/6] Domain valuation skipped (no API keys set)")
         print("  Set REPLICATE_API_TOKEN and/or DOMAININDEX_API_KEY to enable")
-        high_value_domains = compatible_domains
+        high_value_domains = china_ok_domains
         domain_scores: Dict[str, float] = {}
-    elif not compatible_domains:
+    elif not china_ok_domains:
         high_value_domains = []
         domain_scores = {}
     else:
         # Decide how many domains to valuate (budget cap)
-        val_targets = compatible_domains[:max_val_budget]
-        print(f"[4/6] Domain valuation ({len(val_targets)} domains, threshold=${valuation_threshold})...")
+        val_targets = china_ok_domains[:max_val_budget]
+        print(f"[5/6] Domain valuation ({len(val_targets)} domains, threshold=${valuation_threshold})...")
 
         valuations: Dict[str, Dict[str, Optional[float]]] = {
             d: {} for d in val_targets
@@ -749,7 +828,7 @@ def main():
 
         # Filter by threshold
         high_value_domains = [
-            d for d in compatible_domains
+            d for d in china_ok_domains
             if domain_scores.get(d, 0) >= valuation_threshold
         ]
         print(f"[5/6] Valuation filtering (>= ${valuation_threshold})...")
@@ -775,6 +854,7 @@ def main():
     print(f"  Domains collected: {len(all_domains)}")
     print(f"  Domains tested (TLS 1.3+ALPN h2): {len(final_domains)}")
     print(f"  TLS compatible: {len(compatible_domains)}")
+    print(f"  Not in proxy list (kept): {len(china_ok_domains)}")
     print(f"  Above valuation threshold (>= ${valuation_threshold}): {len(high_value_domains)}")
     if high_value_domains:
         print("\n  Top 10 high-value domains:")
