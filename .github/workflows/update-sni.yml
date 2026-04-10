@@ -5,7 +5,6 @@ on:
     # Run every Monday at 00:00 UTC (08:00 Beijing time)
     - cron: '0 0 * * 1'
   workflow_dispatch:
-    # Allow manual trigger
     inputs:
       max_domains:
         description: 'Max domains to test'
@@ -13,10 +12,13 @@ on:
         default: '500'
         type: string
 
+env:
+  REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
+
 jobs:
   update-sni:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: write
       pull-requests: write
@@ -30,31 +32,28 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-
       - name: Run SNI domain fetcher
         id: fetch
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
         run: |
           python scripts/fetch-sni-domains.py \
             --max-domains ${{ inputs.max_domains || '500' }} \
             --threads 30 \
-            --output sni.txt
+            --valuation-threshold 100 \
+            --max-val-domains 200 \
+            --output overlay/usr/share/mimic-node/sni.txt
 
       - name: Check output file
         run: |
-          ls -la sni.txt 2>/dev/null || echo "sni.txt NOT FOUND"
-          head -20 sni.txt 2>/dev/null || echo "Cannot read sni.txt"
-
-      - name: Count domains
-        id: count
-        run: |
-          lines=$(wc -l < sni.txt)
-          echo "Compatible domains: $lines"
+          lines=$(wc -l < overlay/usr/share/mimic-node/sni.txt)
+          echo "Final domains: $lines"
           echo "domain_count=$lines" >> $GITHUB_OUTPUT
+          head -20 overlay/usr/share/mimic-node/sni.txt
+
+      - name: Get current date
+        id: date
+        run: |
+          date=$(date +%Y-%m-%d)
+          echo "release_date=$date" >> $GITHUB_OUTPUT
 
       - name: Create or update PR
         uses: peter-evans/create-pull-request@v7
@@ -71,13 +70,7 @@ jobs:
           branch: chore/update-sni-list
           delete-branch: true
           add-paths: |
-            sni.txt
-
-      - name: Get current date for release
-        id: date
-        run: |
-          date=$(date +%Y-%m-%d)
-          echo "release_date=$date" >> $GITHUB_OUTPUT
+            overlay/usr/share/mimic-node/sni.txt
 
       - name: Create GitHub Release
         if: github.event_name == 'schedule'
@@ -92,23 +85,14 @@ jobs:
 
             **Compatible domains:** ${{ steps.count.outputs.domain_count }}
 
-            These domains support TLS 1.3 with ALPN h2 (required for Reality protocol).
-
-            ### Usage
-            Replace `/usr/share/mimic-node/sni.txt` with the attached file.
-
-            ```bash
-            # After updating
-            sudo mimictl sni --file /path/to/sni.txt
-            ```
-          files: sni.txt
+            Filtered by: TLS 1.3 + ALPN h2 → Clash proxy rules → HumbleWorth valuation ≥ $100
+          files: overlay/usr/share/mimic-node/sni.txt
           draft: false
-          prerelease: false
 
       - name: Upload release artifact
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v5
         with:
           name: sni-domains-${{ steps.date.outputs.release_date }}
-          path: sni.txt
+          path: overlay/usr/share/mimic-node/sni.txt
           retention-days: 30
