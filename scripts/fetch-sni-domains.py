@@ -6,15 +6,13 @@ for TLS 1.3 + ALPN h2 support using openssl, and outputs compatible domains.
 """
 
 import subprocess
-import sys
 import os
 import re
-import tempfile
-import hashlib
-from datetime import datetime
-from typing import Set, Tuple
+from typing import Set, Tuple, Optional, Dict
 import concurrent.futures
 import argparse
+import json
+import time
 
 # Domain sources - from Loyalsoldier's v2ray-rules-dat releases
 # These are in the release assets, not the repo
@@ -38,6 +36,7 @@ def get_latest_release_tag() -> str:
 # Additional hardcoded high-quality domains (always tested first)
 # Criteria: International large sites + accessible from mainland China
 # 符合条件：Apple, Microsoft, Amazon, Cloudflare, PayPal, Shopify, Slack, Zoom, etc.
+# 这些域名经过人工验证，适合作为 Reality SNI
 EXTRA_DOMAINS = """swdist.apple.com
 www.apple.com
 www.icloud.com
@@ -65,46 +64,41 @@ www.salesforce.com
 www.skyscanner.net
 www.booking.com
 www.stripe.com
-www.ebay.com
 www.reddit.com
 github.com
 www.github.com
-www.google.com
-www.facebook.com
 www.youtube.com
-www.instagram.com
-www.twitter.com
 www.linkedin.com
 www.netflix.com
 www.spotify.com
-www.tiktok.com
-www.amazon.com
-www.apple.com
-www.microsoft.com
+www.discord.com
+www.openai.com
+www.telegram.org
 www.cloudflare.com
-www.atlassian.com
-www.shopify.com
-www.slack.com
-www.dropbox.com
-www.zoom.us
-www.paypal.com
-www.stripe.com
-www.salesforce.com
-www.cloudflare.com
+www.akamai.com
+www.fastly.com
 """
 
 # TLDs to exclude (China-based or problematic)
 EXCLUDE_TLDS = {
     # China and related
     '.cn', '.tw', '.hk', '.mo',
-    # Middle East
-    '.saudi', '.ae', '.qa', '.kw', '.om', '.bh', '.iq', '.jo', '.lb', '.sy', '.yi',
     # Russia and CIS
     '.ru', '.su', '.by', '.kz', '.kg', '.tj', '.tm', '.uz',
     # Iran
-    '.ir', '.ae',
-    # Other problematic
-    '.kp', '.sy', '.cu', '.ve',
+    '.ir',
+    # North Korea
+    '.kp',
+    # Syria
+    '.sy',
+    # Cuba
+    '.cu',
+    # Venezuela
+    '.ve',
+    # Short link / url shortener TLDs (not useful for SNI)
+    '.ly', '.to', '.be', '.gg', '.me', '.cc', '.io', '.co', '.im', '.gs',
+    # Other ccTLDs that add no entropy
+    '.sb', '.tv', '.vc', '.ms', '.mu', '.sb',
 }
 
 # Known China-based or China-affiliated domains to exclude
@@ -116,9 +110,87 @@ EXCLUDE_KEYWORDS = {
     'youku', 'iqiyi', 'migu', 'music', 'netease',
     'xiaomi', 'mi.com', 'redmi', 'huawei', 'honor', 'oppo', 'vivo', 'oneplus', 'realme',
     'lenovo', '.gov.cn', 'edu.cn',
-    '163.com', '126.com', 'mail', 'aliyun', ' DingTalk',
+    '163.com', '126.com', 'mail', 'aliyun', 'dingtalk',
     'suning', 'coupon', 'ctrip', 'qunar', 'fliggy', 'hotel',
     'didi', 'grab', 'gojek', 'line',
+    # Google country TLDs - too obvious, reveals Google infrastructure
+    'google.ad', 'google.ae', 'google.al', 'google.am', 'google.as',
+    'google.at', 'google.az', 'google.ba', 'google.be', 'google.bf',
+    'google.bg', 'google.bi', 'google.bj', 'google.bs', 'google.bt',
+    'google.by', 'google.ca', 'google.cd', 'google.cf', 'google.cg',
+    'google.ci', 'google.cl', 'google.cm', 'google.cn', 'google.co',
+    'google.cv', 'google.cz', 'google.de', 'google.dj', 'google.dk',
+    'google.dm', 'google.dz', 'google.ee', 'google.es', 'google.et',
+    'google.fi', 'google.fm', 'google.fr', 'google.ga', 'google.ge',
+    'google.gg', 'google.gl', 'google.gm', 'google.gp', 'google.gr',
+    'google.gy', 'google.hk', 'google.hn', 'google.hr', 'google.ht',
+    'google.hu', 'google.ie', 'google.im', 'google.iq', 'google.is',
+    'google.it', 'google.je', 'google.jo', 'google.jp', 'google.ke',
+    'google.ki', 'google.kz', 'google.la', 'google.li', 'google.lk',
+    'google.lt', 'google.lu', 'google.lv', 'google.md', 'google.me',
+    'google.mg', 'google.mk', 'google.ml', 'google.mn', 'google.ms',
+    'google.mt', 'google.mu', 'google.mv', 'google.mw', 'google.mx',
+    'google.my', 'google.na', 'google.ne', 'google.nl', 'google.no',
+    'google.nr', 'google.nu', 'google.nz', 'google.pl', 'google.pn',
+    'google.ps', 'google.pt', 'google.ro', 'google.rs', 'google.rw',
+    'google.sc', 'google.se', 'google.sh', 'google.si', 'google.sk',
+    'google.sm', 'google.sn', 'google.so', 'google.sr', 'google.st',
+    'google.td', 'google.tg', 'google.tl', 'google.tm', 'google.tn',
+    'google.to', 'google.tt', 'google.vg', 'google.vu', 'google.ws',
+    # Facebook/Meta typos and variants
+    'facboo', 'faebok', 'fb.careers', 'fbhome', 'fb.me', 'fb.gg',
+    'fbsbx', 'fbcdn', 'fburl', 'fbidb',
+    # Typo domains (google)
+    'gogle.com', 'googel.com', 'gogole.com', 'googil.com', 'googlr.com',
+    'goolge.com', 'gogle.', 'googel.', 'googil.', 'googlr.',
+    'foofle.com', 'foofoo.com',
+    # Short link / redirect services
+    'do.co', 'dis.gd', 'adbq.fr', 'link.com', 'pdf.new', 'docs.new',
+    'meet.new', 'shop.app', 'sign.new', 'whats.new', 'redd.it',
+    'youtu.be', 'on.here', 'on2.com', 'run.app', 'web.app',
+    # Google shortlinks / Firebase
+    'page.link', 'pages.dev', 'app.link',
+    # Suspicious or known tracking/ad domains
+    '466453.com', 'admeld.com', 'apture.com', 'atdmt2.com', 'binads.com',
+    'bumptop.ca', 'crixet.com', 'coova.com', 'coova.net', 'coova.org',
+    # Alexa/customer
+    'alexa.com', 'alexa.',
+    # graph.org (suspicious)
+    'graph.org',
+    # tfhub.dev (often used for TensorFlow demos)
+    'tfhub.dev',
+    # Free URL redirects that add no SNI entropy
+    'freeb.com',
+    # Facebook/Meta typo domains (all variants of facebook typo squats)
+    'acebook.com', 'facbeok.com', 'facebof.com', 'facebok.com', 'facebol.com',
+    'facebuk.com', 'faceobk.com', 'faceook.com', 'faebook.com', 'faycbok.com',
+    'fcebook.com', 'feacboo.com', 'fecbbok.com', 'fecbooc.com', 'fecbook.com',
+    'fbookk.com', 'facbook.com', 'facebok.com', 'faceb0ok.com',
+    'faccebook.com', 'facerbook.com', 'facesbook.com', 'factbook.com',
+    'favebook.com', 'fcaebook.com',
+    # Google typos and dead services
+    'googl.com', 'googlee.com', 'froogle.com',
+    # Suspicious dead/experimental Google domains
+    'fuchsia.dev', 'stadia.dev', ' Area120', 'area120.com',
+    'verily.com', 'saynow.com', 'picnik.com', 'picasa.com',
+    # Suspicious redirect or single-word .com domains
+    'chat.com', 'live.com', 'waze.com', 'xoom.com', 'nest.com',
+    'repo.new', 'sora.com', 'nxta.org', 'ton.org',
+    # Other experimental/dead services
+    'bumptop.com', 'bumptop.net', 'bumptop.ca',
+    'gigjam.com', 'revolv.com', 'shazam.com', 'redkix.com',
+    'telega.one', 'wallet.com', 'winhec.com', 'winhec.net',
+    'yammer.com', 'oauthz.com', 'ccnsite.com',
+    # Google Workspace experiment domains
+    'gsuite.com', 'googlee.com',
+    # Microsoft internal/redirect
+    'hwgo.com', 'mepn.com',
+    # Ad/tracking domains
+    'ingads.com', 'brotli.org',
+    # OpenAI typo
+    'chatgpt.com',
+    # Google internal
+    'j2objc.org', 'webrtc.org', 'oauthz.com',
 }
 
 # Known good domains by region (prioritized by server location awareness)
@@ -193,11 +265,15 @@ def is_valid_domain(domain: str) -> bool:
     except UnicodeEncodeError:
         return False
 
-    # Skip very short second-level domains (e.g., "a.co" is suspicious)
     parts = domain.split('.')
+
+    # Skip very short second-level domains (e.g., "a.co", "x.io" are suspicious)
     if len(parts) >= 2:
         sld = parts[-2]  # second-level domain
-        if len(sld) < 2:
+        if len(sld) < 3:
+            return False
+        # Skip domains that are pure numbers or mostly numbers
+        if sld.isdigit():
             return False
 
     # Skip TLDs that are too country-specific or problematic
@@ -205,7 +281,7 @@ def is_valid_domain(domain: str) -> bool:
         if domain.endswith(tld):
             return False
 
-    # Skip domains with China-based keywords
+    # Skip domains with problematic keywords
     domain_lower = domain.lower()
     for keyword in EXCLUDE_KEYWORDS:
         if keyword in domain_lower:
@@ -224,6 +300,19 @@ def is_valid_domain(domain: str) -> bool:
     for pattern in bad_patterns:
         if pattern in domain:
             return False
+
+    # Skip domains with google. prefix that aren't google.com (captures google.md etc)
+    if domain.startswith('google.') and domain != 'google.com':
+        return False
+
+    # Skip domains with too many hyphens (suspicious subdomain chains)
+    if domain.count('-') > 3:
+        return False
+
+    # Skip very short TLDs that are just redirects (< 3 chars, excluding common ones)
+    tld = parts[-1]
+    if len(tld) <= 2 and tld not in ('com', 'net', 'org', 'gov', 'edu', 'mil'):
+        return False
 
     return True
 
@@ -321,7 +410,6 @@ def get_known_good_by_region(region: str) -> list:
     global KNOWN_GOOD
 
     # Split into regional and global
-    regional = []
     global_domains = []
 
     for domain_tuple in KNOWN_GOOD:
@@ -341,21 +429,142 @@ def get_known_good_by_region(region: str) -> list:
     return global_domains
 
 
+# ─── Domain Valuation ────────────────────────────────────────────────
+
+HUMBLEWORTH_MODEL = "llamasrc-ai/humbleworth"
+HUMBLEWORTH_VERSION = "7ypeqnlkkedzre6wesapb3kel66rkx3qjm2q3k3cje5z3qmmm65cq"
+
+
+def extract_value(text: str) -> Optional[float]:
+    """Extract a dollar amount from HumbleWorth output text."""
+    text = text.strip()
+    # Try to find a dollar amount
+    patterns = [
+        r'\$([0-9,]+(?:\.[0-9]+)?)',
+        r'worth.*?\$([0-9,]+)',
+        r'\$([0-9,]+)',
+        r'value.*?([0-9,]+)',
+    ]
+    for pat in patterns:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            val = m.group(1).replace(',', '')
+            try:
+                v = float(val)
+                # Sanity check: skip absurdly low values (< $10) as noise
+                if v >= 10:
+                    return v
+            except ValueError:
+                pass
+    return None
+
+
+def get_humbleworth_value(domain: str, api_token: str, timeout: float = 30.0) -> Tuple[str, Optional[float]]:
+    """
+    Call HumbleWorth on Replicate to get domain valuation.
+    Returns (domain, value_in_dollars or None).
+    """
+    try:
+        import urllib.request
+        import urllib.error
+
+        url = "https://predict.replicate.com/v1/predictions"
+        payload = {
+            "version": HUMBLEWORTH_VERSION,
+            "input": {"domain": domain}
+        }
+
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode(),
+            headers={
+                'Authorization': f'Token {api_token}',
+                'Content-Type': 'application/json',
+            },
+            method='POST'
+        )
+
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            prediction = json.loads(resp.read())
+            pred_id = prediction.get('id')
+            status = prediction.get('status')
+
+        # Poll for completion
+        get_url = f"https://predict.replicate.com/v1/predictions/{pred_id}"
+        for _ in range(60):  # up to 60 * 2s = 120s
+            time.sleep(2)
+            req2 = urllib.request.Request(get_url, headers={'Authorization': f'Token {api_token}'})
+            with urllib.request.urlopen(req2, timeout=timeout) as resp:
+                prediction = json.loads(resp.read())
+            status = prediction.get('status')
+            if status == 'succeeded':
+                output = prediction.get('output', '')
+                if isinstance(output, list):
+                    output = ' '.join(str(o) for o in output)
+                value = extract_value(str(output))
+                return (domain, value)
+            elif status in ('failed', 'canceled'):
+                break
+    except Exception:
+        pass
+    return (domain, None)
+
+
+def get_domainindex_value(domain: str, api_key: str, timeout: float = 10.0) -> Tuple[str, Optional[float]]:
+    """
+    Call DomainIndex appraisal API.
+    Returns (domain, estimated_value_usd or None).
+    """
+    try:
+        import urllib.request
+        import urllib.parse
+
+        params = urllib.parse.urlencode({
+            'action': 'appraise',
+            'domain': domain,
+            'mode': 'json',
+            'key': api_key,
+        })
+        url = f"https://domainindex.com/api.php?{params}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read())
+            # Try to extract price
+            if isinstance(data, dict):
+                price = data.get('price') or data.get('valuation') or data.get('estimated_value')
+                if price:
+                    try:
+                        return (domain, float(price))
+                    except (ValueError, TypeError):
+                        pass
+    except Exception:
+        pass
+    return (domain, None)
+
+
+def score_domain(domain: str, valuations: Dict[str, Optional[float]]) -> float:
+    """
+    Score a domain based on valuation results from multiple APIs.
+    Returns the best (max) valuation in USD, or 0 if no valuations succeeded.
+    Higher score = more valuable domain.
+    """
+    scores = []
+    for source, value in valuations.items():
+        if value is not None and value >= 10:
+            scores.append(value)
+    if not scores:
+        return 0.0
+    return max(scores)
+
+
+# ─── TLS Test ────────────────────────────────────────────────────────
+
 def test_domain_openssl(domain: str, timeout: float = 5.0) -> Tuple[str, bool]:
     """
     Test if domain supports TLS 1.3 with ALPN h2 using openssl.
     Returns (domain, True) if compatible, (domain, False) otherwise.
     """
     try:
-        cmd = [
-            'openssl', 's_client',
-            '-connect', f'{domain}:443',
-            '-alpn', 'h2',
-            '-tls1_3',
-            '-sess_out', '/dev/null',
-            '-sess_id', '/dev/null',
-            '-servername', domain,
-        ]
         # Use echo to immediately close the connection after TLS handshake
         result = subprocess.run(
             ['sh', '-c', f"echo | openssl s_client -connect {domain}:443 -alpn h2 -tls1_3 -servername {domain} 2>&1 | grep -i 'ALPN protocol: h2'"],
@@ -382,6 +591,10 @@ def main():
                         help='Only fetch sources, do not test domains')
     parser.add_argument('--verbose', '-v', action='store_true',
                         help='Verbose output')
+    parser.add_argument('--valuation-threshold', type=float, default=100.0,
+                        help='Minimum domain valuation (USD) to include (default: 100)')
+    parser.add_argument('--max-val-domains', type=int, default=200,
+                        help='Max domains to send for valuation (default: 200)')
     args = parser.parse_args()
 
     print("=" * 60)
@@ -390,7 +603,7 @@ def main():
     print()
 
     # Step 1: Fetch domains from all sources
-    print(f"[1/4] Fetching domain lists...")
+    print("[1/4] Fetching domain lists...")
     all_domains = set()
 
     # Detect server region
@@ -407,55 +620,17 @@ def main():
     all_domains.update(extra_domains)
     print(f"  Added {len(extra_domains)} extra hardcoded domains")
 
-    # Fetch from external domain list sources
-    # v2fly/domain-list-community provides plain-text domain lists
-    GEO_CATEGORIES = [
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/cloudflare',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/microsoft',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/google',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/apple',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/amazon',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/facebook',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/telegram',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/twitter',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/netflix',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/spotify',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/github',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/openai',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/speedtest',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/office',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/adobe',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/aws',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/digitalocean',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/linode',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/vultr',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/facebook',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/reddit',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/linkedin',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/discord',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/whatsapp',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/tiktok',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/youtube',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/twitch',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/steam',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/EpicGames',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/paypal',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/stripe',
-        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/shopify',
-    ]
-    print(f"  Fetching from {len(GEO_CATEGORIES)} external sources...")
-    for url in GEO_CATEGORIES:
-        fetched = fetch_domain_list(url)
-        if fetched:
-            all_domains.update(fetched)
-            print(f"    {url.split('/')[-1]}: +{len(fetched)} domains")
-        else:
-            print(f"    {url.split('/')[-1]}: empty or failed")
+    # NOTE: v2fly/domain-list-community sources disabled.
+    # Their facebook/google/apple lists are heavily polluted with typo-squat domains
+    # (e.g. facbeok.com, google.al, etc.) that are useless for Reality SNI.
+    # Using only KNOWN_GOOD + EXTRA_DOMAINS which are human-curated.
+    # To re-enable, you'd need to add extensive keyword filtering for each category.
+    pass
 
     print(f"  Total unique domains after fetching: {len(all_domains)}")
 
     # Step 2: Filter and validate
-    print(f"[2/5] Filtering domains...")
+    print("[2/5] Filtering domains...")
     valid_domains = set()
     for domain in all_domains:
         if is_valid_domain(domain):
@@ -493,7 +668,7 @@ def main():
         return
 
     # Step 3: Test domains with openssl
-    print(f"[3/5] Testing domains with TLS 1.3 + ALPN h2...")
+    print("[3/5] Testing domains with TLS 1.3 + ALPN h2...")
     compatible_domains = []
     tested = 0
     total = len(final_domains)
@@ -517,15 +692,78 @@ def main():
     print()
     print()
 
-    # Step 4: Write output
-    print(f"[4/5] Writing results...")
-    compatible_domains.sort(key=lambda x: (len(x), x))
+    # Step 4: Domain valuation
+    # Get API keys from environment; graceful no-op if not set
+    replicate_token = os.environ.get('REPLICATE_API_TOKEN', '')
+    domainindex_key = os.environ.get('DOMAININDEX_API_KEY', '')
+
+    valuation_threshold = args.valuation_threshold
+    max_val_budget = getattr(args, 'max_val_domains', 200)
+
+    if not replicate_token and not domainindex_key:
+        print("[4/6] Domain valuation skipped (no API keys set)")
+        print("  Set REPLICATE_API_TOKEN and/or DOMAININDEX_API_KEY to enable")
+        high_value_domains = compatible_domains
+        domain_scores: Dict[str, float] = {}
+    elif not compatible_domains:
+        high_value_domains = []
+        domain_scores = {}
+    else:
+        # Decide how many domains to valuate (budget cap)
+        val_targets = compatible_domains[:max_val_budget]
+        print(f"[4/6] Domain valuation ({len(val_targets)} domains, threshold=${valuation_threshold})...")
+
+        valuations: Dict[str, Dict[str, Optional[float]]] = {
+            d: {} for d in val_targets
+        }
+        val_done = 0
+        val_total = len(val_targets)
+
+        def val_worker(domain: str) -> Tuple[str, Dict[str, Optional[float]]]:
+            result = {}
+            # HumbleWorth (Replicate)
+            if replicate_token:
+                _, val = get_humbleworth_value(domain, replicate_token)
+                result['humbleworth'] = val
+            # DomainIndex
+            if domainindex_key:
+                _, val2 = get_domainindex_value(domain, domainindex_key)
+                result['domainindex'] = val2
+            return (domain, result)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
+            futures = {executor.submit(val_worker, d): d for d in val_targets}
+            for future in concurrent.futures.as_completed(futures):
+                domain, result = future.result()
+                valuations[domain] = result
+                val_done += 1
+                print(f"\r  Valuation progress: {val_done}/{val_total}", end='', flush=True)
+
+        print()
+        print()
+
+        # Score each domain
+        domain_scores = {}
+        for domain, vals in valuations.items():
+            domain_scores[domain] = score_domain(domain, vals)
+
+        # Filter by threshold
+        high_value_domains = [
+            d for d in compatible_domains
+            if domain_scores.get(d, 0) >= valuation_threshold
+        ]
+        print(f"[5/6] Valuation filtering (>= ${valuation_threshold})...")
+        print(f"  Domains above threshold: {len(high_value_domains)}")
+
+    # Step 6: Write output
+    print("[6/6] Writing results...")
+    high_value_domains.sort(key=lambda x: (domain_scores.get(x, 0), len(x), x), reverse=True)
 
     with open(args.output, 'w') as f:
-        for domain in compatible_domains:
+        for domain in high_value_domains:
             f.write(domain + '\n')
 
-    print(f"  Compatible domains found: {len(compatible_domains)}")
+    print(f"  Final domains: {len(high_value_domains)}")
     print(f"  Output written to: {args.output}")
 
     # Print summary
@@ -533,14 +771,16 @@ def main():
     print("=" * 60)
     print("SUMMARY")
     print("=" * 60)
-    print(f"  External sources checked: {len(GEO_CATEGORIES)}")
+    print("  External sources checked: 0 (v2fly disabled due to noise)")
     print(f"  Domains collected: {len(all_domains)}")
-    print(f"  Domains tested: {len(final_domains)}")
-    print(f"  TLS 1.3 + ALPN h2 compatible: {len(compatible_domains)}")
-    if compatible_domains:
-        print(f"\n  Top 10 compatible domains:")
-        for d in compatible_domains[:10]:
-            print(f"    - {d}")
+    print(f"  Domains tested (TLS 1.3+ALPN h2): {len(final_domains)}")
+    print(f"  TLS compatible: {len(compatible_domains)}")
+    print(f"  Above valuation threshold (>= ${valuation_threshold}): {len(high_value_domains)}")
+    if high_value_domains:
+        print("\n  Top 10 high-value domains:")
+        for d in high_value_domains[:10]:
+            score = domain_scores.get(d, 0)
+            print(f"    - {d}  (${score:.2f})" if score > 0 else f"    - {d}")
 
 
 if __name__ == '__main__':
