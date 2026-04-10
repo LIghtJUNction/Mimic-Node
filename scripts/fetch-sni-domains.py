@@ -35,10 +35,6 @@ def get_latest_release_tag() -> str:
     except Exception:
         return '202604072233'  # fallback to known tag
 
-DOMAIN_SOURCES = [
-    # From Loyalsoldier v2ray-rules-dat release (fetched dynamically)
-]
-
 # Additional hardcoded high-quality domains (always tested first)
 # Criteria: International large sites + accessible from mainland China
 # 符合条件：Apple, Microsoft, Amazon, Cloudflare, PayPal, Shopify, Slack, Zoom, etc.
@@ -71,6 +67,30 @@ www.booking.com
 www.stripe.com
 www.ebay.com
 www.reddit.com
+github.com
+www.github.com
+www.google.com
+www.facebook.com
+www.youtube.com
+www.instagram.com
+www.twitter.com
+www.linkedin.com
+www.netflix.com
+www.spotify.com
+www.tiktok.com
+www.amazon.com
+www.apple.com
+www.microsoft.com
+www.cloudflare.com
+www.atlassian.com
+www.shopify.com
+www.slack.com
+www.dropbox.com
+www.zoom.us
+www.paypal.com
+www.stripe.com
+www.salesforce.com
+www.cloudflare.com
 """
 
 # TLDs to exclude (China-based or problematic)
@@ -251,15 +271,16 @@ def parse_domains_from_line(line: str) -> Set[str]:
     # full:example.com -> example.com
     # domain:example.com -> example.com
     # keyword:google -> skip (too broad)
+    # include:other-category -> skip (recursive, handled separately)
     # or just plain domain.com
 
     if ':' in line:
-        prefix, domain = line.split(':', 1)
-        domain = domain.strip()
-        # Only accept 'full' and 'domain' types, skip 'keyword', 'pattern', etc.
+        prefix, rest = line.split(':', 1)
+        rest = rest.strip()
+        # Only accept 'full' and 'domain' types, skip 'keyword', 'pattern', 'include', etc.
         if prefix in ('full', 'domain'):
-            if is_valid_domain(domain):
-                domains.add(domain)
+            if is_valid_domain(rest):
+                domains.add(rest)
     else:
         # Plain domain
         if is_valid_domain(line):
@@ -384,12 +405,57 @@ def main():
     # Add extra hardcoded domains
     extra_domains = load_extra_domains()
     all_domains.update(extra_domains)
-    print(f"  Total unique domains collected: {len(all_domains)}")
+    print(f"  Added {len(extra_domains)} extra hardcoded domains")
+
+    # Fetch from external domain list sources
+    # v2fly/domain-list-community provides plain-text domain lists
+    GEO_CATEGORIES = [
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/cloudflare',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/microsoft',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/google',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/apple',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/amazon',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/facebook',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/telegram',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/twitter',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/netflix',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/spotify',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/github',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/openai',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/speedtest',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/office',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/adobe',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/aws',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/digitalocean',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/linode',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/vultr',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/facebook',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/reddit',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/linkedin',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/discord',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/whatsapp',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/tiktok',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/youtube',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/twitch',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/steam',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/EpicGames',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/paypal',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/stripe',
+        'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/shopify',
+    ]
+    print(f"  Fetching from {len(GEO_CATEGORIES)} external sources...")
+    for url in GEO_CATEGORIES:
+        fetched = fetch_domain_list(url)
+        if fetched:
+            all_domains.update(fetched)
+            print(f"    {url.split('/')[-1]}: +{len(fetched)} domains")
+        else:
+            print(f"    {url.split('/')[-1]}: empty or failed")
 
     print(f"  Total unique domains after fetching: {len(all_domains)}")
 
-    # Step 3: Filter and validate
-    print(f"[2/4] Filtering domains...")
+    # Step 2: Filter and validate
+    print(f"[2/5] Filtering domains...")
     valid_domains = set()
     for domain in all_domains:
         if is_valid_domain(domain):
@@ -426,8 +492,8 @@ def main():
         print(f"Written {len(final_domains)} domains to {args.output}")
         return
 
-    # Step 4: Test domains with openssl
-    print(f"[3/4] Testing domains with TLS 1.3 + ALPN h2...")
+    # Step 3: Test domains with openssl
+    print(f"[3/5] Testing domains with TLS 1.3 + ALPN h2...")
     compatible_domains = []
     tested = 0
     total = len(final_domains)
@@ -451,8 +517,8 @@ def main():
     print()
     print()
 
-    # Step 5: Write output
-    print(f"[4/4] Writing results...")
+    # Step 4: Write output
+    print(f"[4/5] Writing results...")
     compatible_domains.sort(key=lambda x: (len(x), x))
 
     with open(args.output, 'w') as f:
@@ -467,7 +533,7 @@ def main():
     print("=" * 60)
     print("SUMMARY")
     print("=" * 60)
-    print(f"  Sources checked: {len(DOMAIN_SOURCES)}")
+    print(f"  External sources checked: {len(GEO_CATEGORIES)}")
     print(f"  Domains collected: {len(all_domains)}")
     print(f"  Domains tested: {len(final_domains)}")
     print(f"  TLS 1.3 + ALPN h2 compatible: {len(compatible_domains)}")
