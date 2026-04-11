@@ -94,7 +94,7 @@
     "final": "direct",
     "default_domain_resolver": {
       "server": "google",
-      "strategy": "prefer_ipv6"
+      "strategy": "prefer_ipv4"
     }
   },
   "experimental": {
