@@ -71,7 +71,8 @@
       },
       {
         "rule_set": ["geosite-cn", "geoip-cn"],
-        "outbound": "block"
+        "outbound": "block",
+        "sniff": true
       }
     ],
     "rule_set": [
