@@ -365,7 +365,7 @@
       "tag": "wg-endpoint",
       "server": "127.0.0.1",
       "server_port": 51820,
-      "local_address": [
+      "address": [
         "10.0.0.2/32"
       ],
       "private_key": "",
