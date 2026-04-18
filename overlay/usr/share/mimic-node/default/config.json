@@ -61,7 +61,7 @@
       "type": "vless",
       "tag": "vless-ws-in",
       "listen": "::",
-      "listen_port": 443,
+      "listen_port": 8444,
       "tcp_fast_open": true,
       "tcp_keep_alive": "5m",
       "tcp_keep_alive_interval": "75s",
@@ -74,6 +74,8 @@
       "tls": {
         "enabled": true,
         "server_name": "learn.microsoft.com",
+        "certificate_path": "/path/to/cert.pem",
+        "key_path": "/path/to/key.pem",
         "alpn": ["h2"],
         "handshake_timeout": "15s",
         "kernel_tx": true
