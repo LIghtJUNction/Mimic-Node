@@ -38,52 +38,6 @@
   },
   "inbounds": [
     {
-      "type": "tun",
-      "tag": "tun-in",
-      "interface_name": "tun0",
-      "address": [
-        "172.18.0.1/30",
-        "fdfe:dcba:9876::1/126"
-      ],
-      "mtu": 9000,
-      "auto_route": true,
-      "strict_route": true,
-      "iproute2_table_index": 2022,
-      "iproute2_rule_index": 9000,
-      "auto_redirect": true,
-      "auto_redirect_input_mark": "0x2023",
-      "auto_redirect_output_mark": "0x2024",
-      "auto_redirect_reset_mark": "0x2025",
-      "auto_redirect_nfqueue": 100,
-      "auto_redirect_iproute2_fallback_rule_index": 32768,
-      "exclude_mptcp": false,
-      "route_address": [
-        "0.0.0.0/1",
-        "128.0.0.0/1",
-        "::/1",
-        "8000::/1"
-      ],
-      "route_exclude_address": [
-        "192.168.0.0/16",
-        "172.16.0.0/12",
-        "10.0.0.0/8",
-        "fc00::/7"
-      ],
-      "route_exclude_address_set": [
-        "geoip-cn"
-      ],
-      "endpoint_independent_nat": false,
-      "udp_timeout": "5m",
-      "stack": "system",
-      "platform": {
-        "http_proxy": {
-          "enabled": false
-        }
-      },
-      "tcp_keep_alive": "5m",
-      "tcp_keep_alive_interval": "75s"
-    },
-    {
       "type": "vless",
       "tag": "vless-in",
       "listen": "::",
