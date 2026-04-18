@@ -141,6 +141,8 @@ fn deep_merge(base: &Value, override_: &Value) -> Value {
             }
             Value::Array(result)
         }
-        _ => override_.clone(),
+        // For scalars, prefer base value (current config) over override (default)
+        // This preserves user data like private keys, uuids, etc.
+        _ => base.clone(),
     }
 }
