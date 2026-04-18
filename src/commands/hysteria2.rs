@@ -152,8 +152,6 @@ pub fn setup(
             "key_path": key
         },
         "masquerade": masquerade_val,
-        "bbr_profile": "",
-        "brutal_debug": false
     });
 
     // Add QUIC fields if provided
