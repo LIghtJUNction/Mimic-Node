@@ -128,7 +128,12 @@ fn deep_merge(base: &Value, override_: &Value) -> Value {
                     if let Some(base_val) = base_map.get(key) {
                         deep_merge(base_val, override_val)
                     } else {
-                        override_val.clone()
+                        // Don't copy placeholder users for new inbounds
+                        if key == "users" {
+                            Value::Array(vec![])
+                        } else {
+                            override_val.clone()
+                        }
                     },
                 );
             }

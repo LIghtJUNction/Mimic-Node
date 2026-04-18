@@ -188,12 +188,7 @@
       "udp_timeout": "5m",
       "up_mbps": 100,
       "down_mbps": 100,
-      "users": [
-        {
-          "name": "admin",
-          "password": "PWD"
-        }
-      ],
+      "users": [],
       "ignore_client_bandwidth": false,
       "tls": {
         "enabled": true,
@@ -228,13 +223,7 @@
       "tcp_fast_open": true,
       "tcp_keep_alive": "5m",
       "tcp_keep_alive_interval": "75s",
-      "users": [
-        {
-          "name": "sekai",
-          "uuid": "",
-          "password": ""
-        }
-      ],
+      "users": [],
       "congestion_control": "bbr",
       "udp_relay_mode": "native",
       "udp_over_tcp": true,
@@ -252,12 +241,7 @@
       "listen": "::",
       "listen_port": 8444,
       "tcp_fast_open": true,
-      "users": [
-        {
-          "name": "sekai",
-          "password": ""
-        }
-      ],
+      "users": [],
       "padding_scheme": [
         "stop=8",
         "0=30-30",
@@ -311,12 +295,7 @@
       "tcp_fast_open": true,
       "tcp_keep_alive": "5m",
       "tcp_keep_alive_interval": "75s",
-      "users": [
-        {
-          "name": "root",
-          "password": "PWD"
-        }
-      ]
+      "users": []
     }
   ],
   "outbounds": [
