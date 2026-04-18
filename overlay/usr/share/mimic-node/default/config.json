@@ -43,11 +43,7 @@
     "strategy": "prefer_ipv4",
     "disable_cache": false,
     "disable_expire": false,
-    "cache_capacity": 4096,
-    "optimistic": {
-      "enabled": true,
-      "timeout": "3d"
-    }
+    "cache_capacity": 4096
   },
   "inbounds": [
     {
@@ -411,7 +407,6 @@
     }
   ],
   "route": {
-    "find_neighbor": true,
     "dhcp_lease_files": [
       "/var/lib/dnsmasq/dnsmasq.leases",
       "/var/lib/odhcpd/dhcp.leases",
