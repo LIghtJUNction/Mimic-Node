@@ -77,8 +77,7 @@
         "certificate_path": "/path/to/cert.pem",
         "key_path": "/path/to/key.pem",
         "alpn": ["h2"],
-        "handshake_timeout": "15s",
-        "kernel_tx": true
+        "handshake_timeout": "15s"
       }
     },
     {
@@ -101,8 +100,7 @@
         "alpn": ["h3"],
         "certificate_path": "/path/to/cert.pem",
         "key_path": "/path/to/key.pem",
-        "handshake_timeout": "15s",
-        "kernel_tx": true
+        "handshake_timeout": "15s"
       },
       "masquerade": "https://microsoft.com",
       "obfs": {
