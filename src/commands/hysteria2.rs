@@ -27,7 +27,7 @@ fn check_certbot() -> bool {
         .unwrap_or(false)
 }
 
-fn run_certbot(domain: &str, cert_path: &str, key_path: &str) -> Result<()> {
+fn run_certbot(domain: &str, certificate_path: &str, key_path: &str) -> Result<()> {
     eprintln!("{} Running certbot for domain: {}", "[INFO]".green(), domain);
 
     let output = Command::new("certbot")
@@ -55,7 +55,7 @@ fn run_certbot(domain: &str, cert_path: &str, key_path: &str) -> Result<()> {
     let key_path_live = format!("/etc/letsencrypt/live/{}/privkey.pem", domain);
 
     // Copy or symlink to target paths
-    std::fs::copy(&live_path, cert_path)?;
+    std::fs::copy(&live_path, certificate_path)?;
     std::fs::copy(&key_path_live, key_path)?;
 
     eprintln!("{} Certificate generated successfully", "[INFO]".green());
@@ -68,7 +68,7 @@ pub fn setup(
     password: Option<String>,
     masquerade: Option<String>,
     domain: Option<String>,
-    cert_path: Option<String>,
+    certificate_path: Option<String>,
     key_path: Option<String>,
     up_mbps: Option<u32>,
     down_mbps: Option<u32>,
@@ -87,7 +87,7 @@ pub fn setup(
     let pwd = password.clone().unwrap_or_else(|| generate_password(32));
     let obfs_pwd = if obfs { Some(generate_obfs_password()) } else { None };
 
-    let cert = cert_path.clone().unwrap_or_else(|| "/path/to/cert.crt".to_string());
+    let cert = certificate_path.clone().unwrap_or_else(|| "/path/to/cert.crt".to_string());
     let key = key_path.clone().unwrap_or_else(|| "/path/to/cert.key".to_string());
 
     // If domain is provided, try certbot

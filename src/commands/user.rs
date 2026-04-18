@@ -17,7 +17,8 @@ fn sync_short_ids(config: &mut config::SingBoxConfig) {
 
         // Extract SIDs from all users
         for user in &inbound.users {
-            let parts: Vec<&str> = user.name.split(':').collect();
+            let name = user.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let parts: Vec<&str> = name.split(':').collect();
             // Format is email:sid:level. We need the SID (second to last)
             if parts.len() >= 3
                 && let Some(sid) = parts.get(parts.len() - 2)
@@ -41,13 +42,13 @@ fn sync_short_ids(config: &mut config::SingBoxConfig) {
 }
 
 /// Find matching user indices for a given target (uuid, anchored email, glob, or substring)
-pub(crate) fn find_matching_indices(users: &[config::User], target: &str) -> Result<Vec<usize>> {
+pub(crate) fn find_matching_indices(users: &[serde_json::Value], target: &str) -> Result<Vec<usize>> {
     // If target looks like a UUID, try exact uuid match first
     if uuid::Uuid::parse_str(target).is_ok() {
         let exact: Vec<usize> = users
             .iter()
             .enumerate()
-            .filter(|(_i, u)| u.uuid == target)
+            .filter(|(_i, u)| u.get("uuid").and_then(|v| v.as_str()) == Some(target))
             .map(|(i, _)| i)
             .collect();
 
@@ -61,7 +62,9 @@ pub(crate) fn find_matching_indices(users: &[config::User], target: &str) -> Res
             .iter()
             .enumerate()
             .filter(|(_i, u)| {
-                u.uuid.contains(target) || u.name.contains(target) || u.name.contains(&local)
+                let uuid = u.get("uuid").and_then(|v| v.as_str()).unwrap_or("");
+                let name = u.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                uuid.contains(target) || name.contains(target) || name.contains(&local)
             })
             .map(|(i, _)| i)
             .collect();
@@ -83,7 +86,10 @@ pub(crate) fn find_matching_indices(users: &[config::User], target: &str) -> Res
     let anchored: Vec<usize> = users
         .iter()
         .enumerate()
-        .filter(|(_i, u)| re.is_match(&u.name))
+        .filter(|(_i, u)| {
+            let name = u.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            re.is_match(name)
+        })
         .map(|(i, _)| i)
         .collect();
 
@@ -97,7 +103,9 @@ pub(crate) fn find_matching_indices(users: &[config::User], target: &str) -> Res
         .iter()
         .enumerate()
         .filter(|(_i, u)| {
-            u.name.contains(target) || u.name.contains(&local) || u.uuid.contains(target)
+            let name = u.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let uuid = u.get("uuid").and_then(|v| v.as_str()).unwrap_or("");
+            name.contains(target) || name.contains(&local) || uuid.contains(target)
         })
         .map(|(i, _)| i)
         .collect();
@@ -148,11 +156,11 @@ pub fn add(paths: &Paths, emails: Vec<String>, level: u32) -> Result<()> {
         let sid = generate_sid();
         let name = format!("{}:{}:{}", email, sid, level);
 
-        let user = config::User {
-            name: name.clone(),
-            uuid: uuid.clone(),
-            flow: FLOW_TYPE.to_string(),
-        };
+        let user = serde_json::json!({
+            "name": name,
+            "uuid": uuid,
+            "flow": FLOW_TYPE
+        });
 
         if let Some(inbound) = config.inbounds.first_mut() {
             inbound.users.push(user);
@@ -221,7 +229,9 @@ pub fn del(paths: &Paths, targets: Vec<String>, dry_run: bool, apply: bool) -> R
                 for idx in indices {
                     if printed.insert(*idx) {
                         let u = &inbound.users[*idx];
-                        println!("{}\t{}", u.name, u.uuid);
+                        let name = u.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                        let uuid = u.get("uuid").and_then(|v| v.as_str()).unwrap_or("");
+                        println!("{}\t{}", name, uuid);
                         printed_here += 1;
                     }
                 }
@@ -273,7 +283,7 @@ pub fn del(paths: &Paths, targets: Vec<String>, dry_run: bool, apply: bool) -> R
 
         // Perform deletion
         let before = inbound.users.len();
-        let mut kept: Vec<config::User> = Vec::with_capacity(inbound.users.len());
+        let mut kept: Vec<serde_json::Value> = Vec::with_capacity(inbound.users.len());
         for (i, u) in inbound.users.iter().enumerate() {
             if !to_delete.contains(&i) {
                 kept.push(u.clone());
@@ -338,8 +348,8 @@ pub fn reset(paths: &Paths, targets: Vec<String>, dry_run: bool, apply: bool) ->
                 }
 
                 let user = &inbound.users[idx];
-                let old_name = user.name.clone();
-                let old_uuid = user.uuid.clone();
+                let old_name = user.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let old_uuid = user.get("uuid").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let parts: Vec<&str> = old_name.split(':').collect();
                 if parts.len() < 3 {
                     eprintln!(
@@ -392,8 +402,10 @@ pub fn reset(paths: &Paths, targets: Vec<String>, dry_run: bool, apply: bool) ->
             let user = &mut inbound.users[idx];
             let new_uuid = generate_uuid();
 
-            user.name = new_name.clone();
-            user.uuid = new_uuid.clone();
+            if let Some(obj) = user.as_object_mut() {
+                obj.insert("name".to_string(), serde_json::json!(new_name));
+                obj.insert("uuid".to_string(), serde_json::json!(new_uuid));
+            }
 
             eprintln!(
                 "{} Reset user: {} -> {} (uuid: {} -> {})",
@@ -431,11 +443,12 @@ pub fn list(paths: &Paths, filter: Option<String>, json: bool) -> Result<()> {
 
     if json {
         // Collect matching users and output as JSON array
-        let mut out: Vec<config::User> = Vec::new();
+        let mut out: Vec<serde_json::Value> = Vec::new();
         if let Some(inbound) = config.inbounds.first() {
             for user in &inbound.users {
+                let name = user.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 if let Some(f) = &filter
-                    && !user.name.contains(f)
+                    && !name.contains(f)
                 {
                     continue;
                 }
@@ -448,12 +461,15 @@ pub fn list(paths: &Paths, filter: Option<String>, json: bool) -> Result<()> {
 
     if let Some(inbound) = config.inbounds.first() {
         for user in &inbound.users {
+            let name = user.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let uuid = user.get("uuid").and_then(|v| v.as_str()).unwrap_or("");
+            let flow = user.get("flow").and_then(|v| v.as_str()).unwrap_or("");
             if let Some(f) = &filter
-                && !user.name.contains(f)
+                && !name.contains(f)
             {
                 continue;
             }
-            println!("{}\t{}\t{}", user.name, user.uuid, user.flow);
+            println!("{}\t{}\t{}", name, uuid, flow);
         }
     }
     Ok(())
@@ -468,7 +484,7 @@ pub fn info(paths: &Paths, targets: Vec<String>, json: bool) -> Result<()> {
     let mut any_matched = false;
     if let Some(inbound) = config.inbounds.first() {
         let mut seen: HashSet<usize> = HashSet::new();
-        let mut result: Vec<config::User> = Vec::new();
+        let mut result: Vec<serde_json::Value> = Vec::new();
 
         for target in targets {
             let indices = find_matching_indices(&inbound.users, &target)?;
@@ -583,7 +599,7 @@ pub fn update(
                 }
 
                 let user = &inbound.users[idx];
-                let old_name = user.name.clone();
+                let old_name = user.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let parts: Vec<&str> = old_name.split(':').collect();
                 if parts.len() < 3 {
                     return Err(anyhow!(
@@ -647,7 +663,7 @@ pub fn update(
             .iter()
             .enumerate()
             .filter(|(i, _)| !planned_idxs.contains(i))
-            .map(|(_, u)| u.name.clone())
+            .map(|(_, u)| u.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string())
             .collect();
 
         let mut seen_new: HashSet<String> = HashSet::new();
@@ -688,7 +704,9 @@ pub fn update(
             }
 
             let user = &mut inbound.users[idx];
-            user.name = new_name.clone();
+            if let Some(obj) = user.as_object_mut() {
+                obj.insert("name".to_string(), serde_json::json!(new_name));
+            }
             applied += 1;
 
             eprintln!(

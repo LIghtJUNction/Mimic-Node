@@ -125,12 +125,16 @@ pub fn reset(paths: &Paths, keep_users_emails: Vec<String>) -> Result<()> {
             let user_opt = current_config.inbounds.first().and_then(|i| {
                 i.users
                     .iter()
-                    .find(|u| u.name.starts_with(&format!("{}:", email)))
+                    .find(|u| {
+                        let name = u.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                        name.starts_with(&format!("{}:", email))
+                    })
             });
 
             if let Some(user) = user_opt {
                 // Get SID
-                let parts: Vec<&str> = user.name.split(':').collect();
+                let name = user.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let parts: Vec<&str> = name.split(':').collect();
                 let sid = parts.get(parts.len() - 2).unwrap_or(&"").to_string();
 
                 // Add to new config

@@ -27,7 +27,7 @@ pub struct Inbound {
     pub listen_port: u16,
 
     #[serde(default)]
-    pub users: Vec<User>,
+    pub users: Vec<Value>,
 
     #[serde(default)]
     pub tls: Option<TlsConfig>,
@@ -39,8 +39,11 @@ pub struct Inbound {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct User {
+    #[serde(default)]
     pub name: String,
+    #[serde(default)]
     pub uuid: String,
+    #[serde(default)]
     pub flow: String,
 }
 

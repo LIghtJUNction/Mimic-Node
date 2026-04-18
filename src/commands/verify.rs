@@ -204,25 +204,28 @@ pub fn verify(
     }
 
     for (index, user) in inbound.users.iter().enumerate() {
+        let uuid_str = user.get("uuid").and_then(|v| v.as_str()).unwrap_or("");
+        let name_str = user.get("name").and_then(|v| v.as_str()).unwrap_or("");
+
         // A. Validate UUID
-        if let Err(e) = uuid::Uuid::parse_str(&user.uuid) {
+        if let Err(e) = uuid::Uuid::parse_str(uuid_str) {
             eprintln!(
                 "{} User #{} ({}) has invalid UUID: {}",
                 "[ERROR]".red(),
                 index,
-                user.name,
+                name_str,
                 e
             );
             errors += 1;
         } else {
             // Check Duplicate UUID
-            if let Some(prev_user) = seen_uuids.insert(user.uuid.clone(), user.name.clone()) {
+            if let Some(prev_user) = seen_uuids.insert(uuid_str.to_string(), name_str.to_string()) {
                 eprintln!(
                     "{} Duplicate UUID detected: {} (shared by '{}' and '{}')",
                     "[ERROR]".red(),
-                    user.uuid,
+                    uuid_str,
                     prev_user,
-                    user.name
+                    name_str
                 );
                 errors += 1;
             }
@@ -230,13 +233,13 @@ pub fn verify(
 
         // B. Parse Name & Extract SID
         // Expected format: email:sid:level
-        let parts: Vec<&str> = user.name.split(':').collect();
+        let parts: Vec<&str> = name_str.split(':').collect();
         if parts.len() < 3 {
             eprintln!(
                 "{} User #{} name format invalid: '{}' (expected email:sid:level)",
                 "[ERROR]".red(),
                 index,
-                user.name
+                name_str
             );
             errors += 1;
             continue;
@@ -246,13 +249,13 @@ pub fn verify(
         user_sids.insert(sid.clone());
 
         // Check Duplicate SID in users
-        if let Some(prev_user) = seen_sids.insert(sid.clone(), user.name.clone()) {
+        if let Some(prev_user) = seen_sids.insert(sid.clone(), name_str.to_string()) {
             eprintln!(
                 "{} Duplicate SID usage: {} (shared by '{}' and '{}')",
                 "[WARN]".yellow(),
                 sid,
                 prev_user,
-                user.name
+                name_str
             );
             warnings += 1;
         }
@@ -262,7 +265,7 @@ pub fn verify(
             eprintln!(
                 "{} User '{}' uses SID '{}' which is MISSING from reality.short_id list.",
                 "[ERROR]".red(),
-                user.name,
+                name_str,
                 sid
             );
             errors += 1;
@@ -358,10 +361,12 @@ fn verify_link(link: &str, config: &SingBoxConfig, verbose: bool) -> Result<()> 
     let uuid_str = url.username();
     let mut found_user = false;
     for user in &inbound.users {
-        if user.uuid == uuid_str {
+        let user_uuid = user.get("uuid").and_then(|v| v.as_str()).unwrap_or("");
+        let user_name = user.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        if user_uuid == uuid_str {
             found_user = true;
             if verbose {
-                println!("{} UUID matches user '{}'", "[PASS]".green(), user.name);
+                println!("{} UUID matches user '{}'", "[PASS]".green(), user_name);
             }
             break;
         }

@@ -351,7 +351,7 @@ pub async fn link(
     if indices.len() > 1 {
         let candidates: Vec<String> = indices
             .iter()
-            .map(|&i| inbound.users[i].name.clone())
+            .map(|&i| inbound.users[i].get("name").and_then(|v| v.as_str()).unwrap_or("").to_string())
             .collect();
         return Err(anyhow!(
             "Ambiguous target '{}': matched multiple users: {}. Please specify a UUID or a more specific pattern.",
@@ -362,7 +362,10 @@ pub async fn link(
 
     // Single match -> proceed
     let user = &inbound.users[indices[0]];
-    let parts: Vec<&str> = user.name.split(':').collect();
+    let user_name = user.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    let user_uuid = user.get("uuid").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let user_flow = user.get("flow").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let parts: Vec<&str> = user_name.split(':').collect();
     let sid = parts.get(parts.len() - 2).unwrap_or(&"").to_string();
 
     let port = inbound.listen_port;
@@ -950,7 +953,7 @@ pub async fn link(
         let label = sid_label(&sid);
         let link = format!(
             "vless://{}@{}:{}?security=reality&encryption=none&pbk={}&fp=chrome&type=tcp&sni={}&sid={}&flow={}#{}",
-            user.uuid, host, port, pbk, sni, sid, user.flow, label
+            user_uuid, host, port, pbk, sni, sid, user_flow, label
         );
         links.push(link);
     }
