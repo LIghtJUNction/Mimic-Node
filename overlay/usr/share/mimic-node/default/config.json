@@ -5,21 +5,6 @@
     "output": "",
     "timestamp": true
   },
-  "certificate_providers": {
-    "acme": {
-      "tag": "acme-cert",
-      "domain": [],
-      "data_directory": "",
-      "default_server_name": "",
-      "email": "",
-      "provider": "letsencrypt",
-      "disable_http_challenge": false,
-      "disable_tls_alpn_challenge": false,
-      "alternative_http_port": 0,
-      "alternative_tls_port": 0,
-      "key_type": "p256"
-    }
-  },
   "dns": {
     "servers": [
       {
