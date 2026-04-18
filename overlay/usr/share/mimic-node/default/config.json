@@ -61,21 +61,20 @@
       "type": "vless",
       "tag": "vless-ws-in",
       "listen": "::",
-      "listen_port": 8080,
+      "listen_port": 443,
       "tcp_fast_open": true,
       "tcp_keep_alive": "5m",
       "tcp_keep_alive_interval": "75s",
       "transport": {
-        "type": "ws",
-        "path": "/vless-ws",
-        "headers": {},
-        "max_early_data": 0,
-        "early_data_header_name": ""
+        "type": "http",
+        "host": ["learn.microsoft.com"],
+        "path": "/vless-h2"
       },
       "users": [],
       "tls": {
         "enabled": true,
-        "server_name": "microsoft.com",
+        "server_name": "learn.microsoft.com",
+        "alpn": ["h2"],
         "handshake_timeout": "15s",
         "kernel_tx": true
       }
