@@ -117,6 +117,9 @@ async fn main() -> Result<()> {
             Hysteria2Commands::AddUser { name, password, dry_run } => {
                 commands::hysteria2::add_user(&paths, name, password, dry_run)?
             }
+            Hysteria2Commands::Link { name } => {
+                commands::hysteria2::link(&paths, name)?
+            }
         },
         Commands::Dns { command } => match command {
             DnsCommands::SetupDoH3 { dry_run } => {
