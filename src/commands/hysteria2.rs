@@ -148,7 +148,7 @@ pub fn setup(
         "tls": {
             "enabled": true,
             "alpn": ["h3"],
-            "cert_path": cert,
+            "certificate_path": cert,
             "key_path": key
         },
         "masquerade": masquerade_val,

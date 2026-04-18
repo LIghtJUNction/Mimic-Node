@@ -222,11 +222,6 @@
       "udp_fragment": true,
       "domain_matcher": "mph",
       "fallback_delay": "300ms",
-      "tfo": {
-        "enabled": true,
-        "write_buffer": 0,
-        "read_buffer": 0
-      },
       "chain": []
     },
     {
@@ -252,8 +247,7 @@
       "reuse_addr": false,
       "connect_timeout": "5s",
       "tcp_fast_open": true,
-      "udp_fragment": false,
-      "domain_matcher": "mph"
+      "udp_fragment": false
     },
     {
       "type": "hysteria2",
