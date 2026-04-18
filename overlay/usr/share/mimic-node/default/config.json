@@ -28,11 +28,6 @@
       {
         "rule_set": "geosite-cn",
         "server": "alidns"
-      },
-      {
-        "match_response": true,
-        "ip_accept_any": true,
-        "action": "respond"
       }
     ],
     "final": "google",
