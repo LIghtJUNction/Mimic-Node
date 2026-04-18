@@ -86,15 +86,13 @@
       "listen": "::",
       "listen_port": 8443,
       "tcp_fast_open": true,
-      "tcp_multi_path": false,
+      "tcp_multi_path": true,
       "tcp_keep_alive": "5m",
       "tcp_keep_alive_interval": "75s",
       "disable_tcp_keep_alive": false,
       "udp_timeout": "5m",
-      "up_mbps": 100,
-      "down_mbps": 100,
+      "ignore_client_bandwidth": true,
       "users": [],
-      "ignore_client_bandwidth": false,
       "tls": {
         "enabled": true,
         "alpn": ["h3"],
@@ -103,6 +101,8 @@
         "handshake_timeout": "15s"
       },
       "masquerade": "https://microsoft.com",
+      "brutal_debug": false,
+      "bbr_profile": "aggressive",
       "obfs": {
         "type": "salamander",
         "password": ""
@@ -242,9 +242,6 @@
       "tag": "hysteria2-out",
       "server": "127.0.0.1",
       "server_port": 443,
-      "up_mbps": 100,
-      "down_mbps": 100,
-      "password": "",
       "obfs": {
         "type": "salamander",
         "password": ""
