@@ -128,11 +128,12 @@ fn deep_merge(base: &Value, override_: &Value) -> Value {
                     if let Some(base_val) = base_map.get(key) {
                         deep_merge(base_val, override_val)
                     } else {
-                        // Don't copy placeholder users for new inbounds
-                        if key == "users" {
-                            Value::Array(vec![])
-                        } else {
-                            override_val.clone()
+                        // For new fields, only copy if they're empty arrays/objects
+                        // This prevents adding 1.14.0+ fields that would break 1.13.x
+                        match override_val {
+                            Value::Array(arr) if arr.is_empty() => override_val.clone(),
+                            Value::Object(obj) if obj.is_empty() => override_val.clone(),
+                            _ => override_val.clone(),
                         }
                     },
                 );

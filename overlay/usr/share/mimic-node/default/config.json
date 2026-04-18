@@ -42,27 +42,10 @@
       "tag": "vless-in",
       "listen": "::",
       "listen_port": 443,
-      "tcp_fast_open": true,
-      "tcp_multi_path": false,
-      "tcp_keep_alive": "5m",
-      "tcp_keep_alive_interval": "75s",
-      "disable_tcp_keep_alive": false,
-      "udp_timeout": "5m",
-      "multiplex": {
-        "enabled": true,
-        "padding": false,
-        "brutal": {
-          "enabled": true,
-          "up_mbps": 100,
-          "down_mbps": 200
-        }
-      },
       "users": [],
       "tls": {
         "enabled": true,
         "server_name": "",
-        "handshake_timeout": "15s",
-        "kernel_tx": true,
         "reality": {
           "enabled": true,
           "handshake": {
@@ -72,10 +55,6 @@
           "private_key": "",
           "short_id": []
         }
-      },
-      "udp_over_tcp": {
-        "enabled": true,
-        "version": 2
       }
     },
     {
