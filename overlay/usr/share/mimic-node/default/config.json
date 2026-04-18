@@ -359,44 +359,6 @@
       }
     }
   ],
-  "endpoints": [
-    {
-      "type": "wireguard",
-      "tag": "wg-endpoint",
-      "server": "127.0.0.1",
-      "server_port": 51820,
-      "address": [
-        "10.0.0.2/32"
-      ],
-      "private_key": "",
-      "peer_public_key": "",
-      "pre_shared_key": "",
-      "mtu": 1280,
-      "reserved": []
-    },
-    {
-      "type": "tailscale",
-      "tag": "ts-endpoint",
-      "state_directory": "",
-      "auth_key": "",
-      "control_url": "",
-      "control_http_client": "",
-      "ephemeral": false,
-      "hostname": "",
-      "accept_routes": false,
-      "exit_node": "",
-      "exit_node_allow_lan_access": false,
-      "advertise_routes": [],
-      "advertise_exit_node": false,
-      "advertise_tags": [],
-      "relay_server_port": 0,
-      "relay_server_static_endpoints": [],
-      "system_interface": false,
-      "system_interface_name": "",
-      "system_interface_mtu": 0,
-      "udp_timeout": "5m"
-    }
-  ],
   "route": {
     "dhcp_lease_files": [
       "/var/lib/dnsmasq/dnsmasq.leases",
