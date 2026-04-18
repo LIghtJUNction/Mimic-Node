@@ -30,10 +30,6 @@
         "server": "alidns"
       },
       {
-        "action": "evaluate",
-        "server": "hosts"
-      },
-      {
         "match_response": true,
         "ip_accept_any": true,
         "action": "respond"
