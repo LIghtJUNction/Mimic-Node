@@ -84,7 +84,7 @@
       "type": "hysteria2",
       "tag": "hy2-in",
       "listen": "::",
-      "listen_port": 443,
+      "listen_port": 8443,
       "tcp_fast_open": true,
       "tcp_multi_path": false,
       "tcp_keep_alive": "5m",
@@ -107,17 +107,6 @@
       "obfs": {
         "type": "salamander",
         "password": ""
-      },
-      "bbr_profile": "bbr",
-      "brutal_debug": false,
-      "transport": {
-        "type": "http",
-        "host": [],
-        "path": "",
-        "method": "",
-        "headers": {},
-        "idle_timeout": "15s",
-        "ping_timeout": "15s"
       }
     },
     {
