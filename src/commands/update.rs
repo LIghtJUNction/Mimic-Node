@@ -128,8 +128,8 @@ fn deep_merge(base: &Value, override_: &Value) -> Value {
                     if let Some(base_val) = base_map.get(key) {
                         deep_merge(base_val, override_val)
                     } else {
-                        // For new fields, only copy if they're empty arrays/objects
-                        // This prevents adding 1.14.0+ fields that would break 1.13.x
+                        // Don't add new fields from override - they may be incompatible
+                        // Only empty arrays/objects are safe to add
                         match override_val {
                             Value::Array(arr) if arr.is_empty() => override_val.clone(),
                             Value::Object(obj) if obj.is_empty() => override_val.clone(),
@@ -141,13 +141,14 @@ fn deep_merge(base: &Value, override_: &Value) -> Value {
             Value::Object(result)
         }
         (Value::Array(base_arr), Value::Array(override_arr)) => {
+            // Only merge existing array items by index - don't append new items
+            // This prevents adding new inbounds/features that may be incompatible
             let mut result = base_arr.clone();
             for (i, override_item) in override_arr.iter().enumerate() {
                 if i < result.len() {
                     result[i] = deep_merge(&result[i], override_item);
-                } else {
-                    result.push(override_item.clone());
                 }
+                // Don't append new items - skip them
             }
             Value::Array(result)
         }
