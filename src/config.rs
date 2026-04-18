@@ -18,6 +18,9 @@ pub struct Inbound {
     pub protocol_type: String,
 
     #[serde(default)]
+    pub tag: String,
+
+    #[serde(default)]
     pub listen: String,
 
     #[serde(default)]
@@ -39,6 +42,41 @@ pub struct User {
     pub name: String,
     pub uuid: String,
     pub flow: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Hysteria2User {
+    pub password: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Hysteria2Inbound {
+    #[serde(rename = "type")]
+    pub protocol_type: String,
+    #[serde(default)]
+    pub tag: String,
+    #[serde(default)]
+    pub listen: String,
+    #[serde(default)]
+    pub masquerade: String,
+    #[serde(default)]
+    pub listen_port: u16,
+    #[serde(default)]
+    pub users: Vec<Hysteria2User>,
+    #[serde(default)]
+    pub tls: Option<Hysteria2TlsConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Hysteria2TlsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub alpn: Vec<String>,
+    #[serde(default)]
+    pub key_path: String,
+    #[serde(default)]
+    pub cert_path: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

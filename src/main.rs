@@ -6,7 +6,7 @@ mod utils;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Commands};
+use cli::{Cli, Commands, DnsCommands, Hysteria2Commands, SkillCommands};
 use paths::Paths;
 
 #[tokio::main]
@@ -23,6 +23,20 @@ async fn main() -> Result<()> {
                 config: Some(_),
                 ..
             }
+            | Commands::Hysteria2 {
+                command: Hysteria2Commands::Setup { dry_run: true, .. }
+                    | Hysteria2Commands::AddUser { dry_run: true, .. },
+            }
+            | Commands::Dns {
+                command: DnsCommands::SetupDoH3 { dry_run: true, .. }
+                    | DnsCommands::AddServer { dry_run: true, .. },
+            }
+            | Commands::Upgrade {
+                dry_run: true,
+                ..
+            }
+            | Commands::Diagnose { .. }
+            | Commands::Skill { .. }
     );
 
     if need_overlay {
@@ -65,6 +79,66 @@ async fn main() -> Result<()> {
         Commands::Reset { keep_users } => commands::system::reset(&paths, keep_users)?,
         Commands::Discard { items, force } => commands::system::discard(&paths, items, force)?,
         Commands::Sni { domain, file } => commands::net::sni(&paths, domain, file).await?,
+        Commands::Hysteria2 { command } => match command {
+            Hysteria2Commands::Setup {
+                port,
+                password,
+                masquerade,
+                domain,
+                cert_path,
+                key_path,
+                up_mbps,
+                down_mbps,
+                obfs,
+                http2_idle_timeout,
+                http2_keep_alive_period,
+                http2_max_concurrent_streams,
+                quic_initial_packet_size,
+                quic_disable_path_mtu_discovery,
+                dry_run,
+            } => commands::hysteria2::setup(
+                &paths,
+                port,
+                password,
+                masquerade,
+                domain,
+                cert_path,
+                key_path,
+                up_mbps,
+                down_mbps,
+                obfs,
+                http2_idle_timeout,
+                http2_keep_alive_period,
+                http2_max_concurrent_streams,
+                quic_initial_packet_size,
+                quic_disable_path_mtu_discovery,
+                dry_run,
+            )?,
+            Hysteria2Commands::AddUser { name, password, dry_run } => {
+                commands::hysteria2::add_user(&paths, name, password, dry_run)?
+            }
+        },
+        Commands::Dns { command } => match command {
+            DnsCommands::SetupDoH3 { dry_run } => {
+                commands::dns::setup(&paths, dry_run)?
+            }
+            DnsCommands::AddServer {
+                tag,
+                server,
+                server_type,
+                port,
+                path,
+                dry_run,
+            } => commands::dns::add_server(
+                &paths,
+                tag,
+                server,
+                server_type,
+                port,
+                path,
+                dry_run,
+            )?,
+        },
         Commands::Completions { shell, apply } => commands::net::completions(shell, apply)?,
         Commands::Link {
             email,
@@ -94,11 +168,27 @@ async fn main() -> Result<()> {
         Commands::Diff => commands::system::diff(&paths)?,
         Commands::Apply => commands::system::apply(&paths)?,
         Commands::Check => commands::system::check(&paths)?,
+        Commands::Upgrade { auto, dry_run } => {
+            commands::update::upgrade(&paths, auto, dry_run)?
+        }
+        Commands::Setup => {
+            commands::setup::interactive(&paths)?
+        }
+        Commands::Diagnose { verbose } => {
+            commands::diagnose::run(&paths, verbose)?
+        }
         Commands::Verify {
             verbose,
             config,
             link,
         } => commands::verify::verify(&paths, verbose, config, link)?,
+        Commands::Skill { command } => match command {
+            SkillCommands::Install { project, force } => {
+                commands::skill::install(project, force)?
+            }
+            SkillCommands::Uninstall { project } => commands::skill::uninstall(project)?,
+            SkillCommands::Status => commands::skill::status()?,
+        },
     }
 
     Ok(())

@@ -114,7 +114,6 @@ V2RAY_GEOSITE_CATEGORIES = [
     "category-dev",
     "category-collaborate-cn",
     "category-container",
-    "category-browswer-!cn",
     # Communication / Social
     "category-communication",
     "category-social-media-!cn",
@@ -142,6 +141,30 @@ V2RAY_GEOSITE_CATEGORIES = [
     "category-orgs",
     # Cryptcurrency
     "category-cryptocurrency",
+    # Additional high-quality categories
+    "category-anticensorship",
+    "category-blog",
+    "category-blog-cn",
+    "category-cas",
+    "category-dns",
+    "category-education",
+    "category-health",
+    "category-hot",
+    "category-httpdns-cn",
+    "category-learning",
+    "category-mail",
+    "category-misc",
+    "category-motor",
+    "category-news",
+    "category-scholar-!cn",
+    "category-search",
+    "category-shopping",
+    "category-software",
+    "category-streaming",
+    "category-torrent",
+    "category-translate",
+    "category-video",
+    "category-voip",
 ]
 
 
@@ -747,6 +770,53 @@ KNOWN_GOOD = {
     # Reddit (global - though partially blocked)
     ("www.reddit.com", "global"),
 }
+
+# ─── Chinese-hosted domain check ──────────────────────────────────────
+# Heuristic: domains hosted on known Chinese CDN/IP ranges are excluded.
+# We check if the domain's second-level TLD or known host resolves to China IPs.
+# This is a fast heuristic; the Clash PROXY list already handles confirmed
+# China-blocked domains (which is the more important filter).
+
+# Known Chinese CDN/infrastructure that serve foreign domains from China:
+CHINA_CDN_KEYWORDS = {
+    # Chinese CDN providers that proxy foreign domains
+    "baidu.com",  # Baidu's CDN for hosted content
+    "bdstatic.com",  # Baidu static resources
+    "alicdn.com",  # Aliyun CDN
+    "aliyun.com",  # Aliyun
+    "aliyuncs.com",  # Aliyun services
+    "cachecn.com",
+    "chinacache.com",  # ChinaCache CDN
+    "cn99.com",  # 99 CDN
+    "chinanetcenter.com",
+    "wangsu.com",  # Wangsu CDN
+    "cdn77.com",
+    "fastcdn.com",
+    "chgslb.com",
+    # Chinese cloud providers hosting foreign sites
+    "tencent.com",
+    "qcloud.com",  # Tencent Cloud
+    "myqcloud.com",
+    "gservice.com",
+    "micUpdate.com",
+    # Note: just having a Chinese CDN keyword doesn't mean the domain
+    # itself is Chinese - it could be a foreign site using Chinese CDN.
+    # This filter is intentionally weak to avoid false positives.
+}
+
+
+def is_china_cdn_hosted(domain: str) -> bool:
+    """Check if domain uses a Chinese CDN/infrastructure.
+    This is a weak heuristic - only flags if domain clearly uses Chinese CDN.
+    """
+    domain_lower = domain.lower()
+    parts = domain_lower.split(".")
+    # Check if domain contains known Chinese CDN/provider in its name
+    # (e.g., a.domain.bdstatic.com would be flagged)
+    for cdn in CHINA_CDN_KEYWORDS:
+        if cdn in domain_lower:
+            return True
+    return False
 
 
 def is_valid_domain(domain: str) -> bool:

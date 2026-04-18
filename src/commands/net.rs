@@ -144,11 +144,10 @@ pub async fn sni(
 
         // First: known good domains matching server region or global
         for (domain, region) in KNOWN_GOOD_DOMAINS {
-            if *region == region_str || *region == "global" {
-                if candidates.contains(&domain.to_string()) {
+            if (*region == region_str || *region == "global")
+                && candidates.contains(&domain.to_string()) {
                     prioritized_candidates.push(domain.to_string());
                 }
-            }
         }
 
         // Then: all other candidates not already added
@@ -491,17 +490,14 @@ pub async fn link(
                         let mut found_prefix: Option<(std::net::Ipv6Addr, usize)> = None;
                         for line in stdout.lines() {
                             for token in line.split_whitespace() {
-                                if token.contains(':') && token.contains('/') {
-                                    if let Some((addr_str, plen_str)) = token.split_once('/') {
-                                        if let Ok(plen) = plen_str.parse::<usize>() {
-                                            if let Ok(ipv6) = addr_str.parse::<std::net::Ipv6Addr>()
+                                if token.contains(':') && token.contains('/')
+                                    && let Some((addr_str, plen_str)) = token.split_once('/')
+                                        && let Ok(plen) = plen_str.parse::<usize>()
+                                            && let Ok(ipv6) = addr_str.parse::<std::net::Ipv6Addr>()
                                             {
                                                 found_prefix = Some((ipv6, plen));
                                                 break;
                                             }
-                                        }
-                                    }
-                                }
                             }
                             if found_prefix.is_some() {
                                 break;
@@ -555,7 +551,7 @@ pub async fn link(
                                     // Fill tail of the address with random hextets starting at prefix boundary
                                     let tail_index = prefix_hextets;
                                     if tail_index <= 4 {
-                                        segs[tail_index + 0] = r1;
+                                        segs[tail_index] = r1;
                                         segs[tail_index + 1] = r2;
                                         segs[tail_index + 2] = r3;
                                         segs[tail_index + 3] = r4;
@@ -646,19 +642,17 @@ pub async fn link(
                                     }
                                 }
                             }
+                        } else if strict {
+                            return Err(anyhow!(
+                                "No global IPv6 prefix found on interface {}",
+                                iface_name
+                            ));
                         } else {
-                            if strict {
-                                return Err(anyhow!(
-                                    "No global IPv6 prefix found on interface {}",
-                                    iface_name
-                                ));
-                            } else {
-                                eprintln!(
-                                    "{} No global IPv6 prefix found on interface {}; skipping IPv6 auto-assign.",
-                                    "[WARN]".yellow(),
-                                    iface_name
-                                );
-                            }
+                            eprintln!(
+                                "{} No global IPv6 prefix found on interface {}; skipping IPv6 auto-assign.",
+                                "[WARN]".yellow(),
+                                iface_name
+                            );
                         }
                     }
                 }
@@ -703,18 +697,15 @@ pub async fn link(
                             let mut found_v4_prefix: Option<(std::net::Ipv4Addr, usize)> = None;
                             for line in stdout4.lines() {
                                 for token in line.split_whitespace() {
-                                    if token.contains('.') && token.contains('/') {
-                                        if let Some((addr_str, plen_str)) = token.split_once('/') {
-                                            if let Ok(plen) = plen_str.parse::<usize>() {
-                                                if let Ok(ipv4) =
+                                    if token.contains('.') && token.contains('/')
+                                        && let Some((addr_str, plen_str)) = token.split_once('/')
+                                            && let Ok(plen) = plen_str.parse::<usize>()
+                                                && let Ok(ipv4) =
                                                     addr_str.parse::<std::net::Ipv4Addr>()
                                                 {
                                                     found_v4_prefix = Some((ipv4, plen));
                                                     break;
                                                 }
-                                            }
-                                        }
-                                    }
                                 }
                                 if found_v4_prefix.is_some() {
                                     break;
@@ -848,19 +839,17 @@ pub async fn link(
                                         }
                                     }
                                 }
+                            } else if strict {
+                                return Err(anyhow!(
+                                    "No IPv4 prefix found on interface {}",
+                                    iface_name
+                                ));
                             } else {
-                                if strict {
-                                    return Err(anyhow!(
-                                        "No IPv4 prefix found on interface {}",
-                                        iface_name
-                                    ));
-                                } else {
-                                    eprintln!(
-                                        "{} No IPv4 prefix found on interface {}; skipping IPv4 auto-assign.",
-                                        "[WARN]".yellow(),
-                                        iface_name
-                                    );
-                                }
+                                eprintln!(
+                                    "{} No IPv4 prefix found on interface {}; skipping IPv4 auto-assign.",
+                                    "[WARN]".yellow(),
+                                    iface_name
+                                );
                             }
                         }
                     }
@@ -885,16 +874,14 @@ pub async fn link(
                 let mut added = std::collections::HashSet::<String>::new();
                 if let Ok(resp) = client.get("https://api6.ipify.org").send().await
                     && let Ok(text) = resp.text().await
-                {
-                    if !text.is_empty() {
+                    && !text.is_empty() {
                         addresses.push(text.clone());
                         added.insert(text);
                     }
-                }
 
                 // If we still need additional addresses, enumerate local interfaces and collect candidates
-                if addresses.len() < num {
-                    if let Ok(ifaces) = get_if_addrs() {
+                if addresses.len() < num
+                    && let Ok(ifaces) = get_if_addrs() {
                         let ips_iter = ifaces.into_iter().map(|ifa| ifa.addr.ip());
                         let candidates = collect_ipv6_candidates(ips_iter, num);
                         for v6 in candidates {
@@ -915,7 +902,6 @@ pub async fn link(
                             );
                         }
                     }
-                }
             }
         }
 
@@ -1012,8 +998,8 @@ fn collect_links_from_input(input: &str) -> Result<Vec<String>> {
             continue;
         }
         // try parse small JSON fragments like ["..."] or "..."
-        if l.starts_with('[') || l.starts_with('"') {
-            if let Ok(v2) = serde_json::from_str::<Value>(l) {
+        if (l.starts_with('[') || l.starts_with('"'))
+            && let Ok(v2) = serde_json::from_str::<Value>(l) {
                 if let Some(s) = v2.as_str() {
                     out.push(s.to_string());
                     continue;
@@ -1026,7 +1012,6 @@ fn collect_links_from_input(input: &str) -> Result<Vec<String>> {
                     continue;
                 }
             }
-        }
 
         // tokenise whitespace, pick tokens that look like vless links
         for tok in l.split_whitespace() {
@@ -1226,7 +1211,7 @@ pub async fn from_link(
         map.insert("outbounds".to_string(), json!(final_outbounds));
         map.insert("route".to_string(), json!({"final": selector_tag}));
     } else {
-        let final_tag = tags.get(0).unwrap().clone();
+        let final_tag = tags.first().unwrap().clone();
         map.insert("outbounds".to_string(), json!(final_outbounds));
         map.insert("route".to_string(), json!({"final": final_tag}));
     }

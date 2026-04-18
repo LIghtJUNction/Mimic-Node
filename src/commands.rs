@@ -1,5 +1,11 @@
+pub mod diagnose;
+pub mod dns;
+pub mod hysteria2;
 pub mod keys;
 pub mod net;
+pub mod setup;
+pub mod skill;
 pub mod system;
+pub mod update;
 pub mod user;
 pub mod verify;

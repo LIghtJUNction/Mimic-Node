@@ -612,14 +612,12 @@ pub fn update(
                             // replace all
                             re.replace_all(&cur_email, to.as_str()).to_string()
                         }
+                    } else if replace_first {
+                        // replace first literal occurrence
+                        cur_email.replacen(from, to, 1)
                     } else {
-                        if replace_first {
-                            // replace first literal occurrence
-                            cur_email.replacen(from, to, 1)
-                        } else {
-                            // replace all literal occurrences
-                            cur_email.replace(from, to)
-                        }
+                        // replace all literal occurrences
+                        cur_email.replace(from, to)
                     }
                 } else {
                     cur_email

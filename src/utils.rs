@@ -1,6 +1,5 @@
 use anyhow::{Context, Result, anyhow};
 use colored::*;
-use rand::Rng;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -120,8 +119,7 @@ pub fn generate_uuid() -> String {
 }
 
 pub fn generate_sid() -> String {
-    let mut rng = rand::rng();
-    let rand_bytes: [u8; 8] = rng.random();
+    let rand_bytes: [u8; 8] = rand::random();
     hex::encode(rand_bytes)
 }
 

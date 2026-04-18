@@ -174,7 +174,6 @@ pub enum DiffEntry {
 
 /// Recursively collect all differences between two JSON objects
 fn collect_diffs(path: &str, old_val: &serde_json::Value, new_val: &serde_json::Value, diffs: &mut Vec<DiffEntry>) {
-    use serde_json::Value;
 
     let path_string: String = path.to_string();
 
@@ -317,11 +316,10 @@ fn apply_diff(value: &mut serde_json::Value, diff: &DiffEntry) {
                 }
             } else {
                 let parent_path = parts[..parts.len()-1].join(".");
-                if let Some(parent) = navigate_to(value, &parent_path) {
-                    if let serde_json::Value::Object(m) = parent {
+                if let Some(parent) = navigate_to(value, &parent_path)
+                    && let serde_json::Value::Object(m) = parent {
                         m.insert(final_key, new_val.clone());
                     }
-                }
             }
         }
         DiffEntry::Removed { path, .. } => {
@@ -341,11 +339,10 @@ fn apply_diff(value: &mut serde_json::Value, diff: &DiffEntry) {
                 }
             } else {
                 let parent_path = parts[..parts.len()-1].join(".");
-                if let Some(parent) = navigate_to(value, &parent_path) {
-                    if let serde_json::Value::Object(m) = parent {
+                if let Some(parent) = navigate_to(value, &parent_path)
+                    && let serde_json::Value::Object(m) = parent {
                         m.remove(&final_key);
                     }
-                }
             }
         }
         DiffEntry::Modified { path, new_value, .. } => {
@@ -365,11 +362,10 @@ fn apply_diff(value: &mut serde_json::Value, diff: &DiffEntry) {
                 }
             } else {
                 let parent_path = parts[..parts.len()-1].join(".");
-                if let Some(parent) = navigate_to(value, &parent_path) {
-                    if let serde_json::Value::Object(m) = parent {
+                if let Some(parent) = navigate_to(value, &parent_path)
+                    && let serde_json::Value::Object(m) = parent {
                         m.insert(final_key, new_value.clone());
                     }
-                }
             }
         }
     }
