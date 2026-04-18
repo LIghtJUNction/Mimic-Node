@@ -87,6 +87,13 @@ pub enum Hysteria2Commands {
         #[arg(short = 'n', long = "dry-run")]
         dry_run: bool,
     },
+
+    /// Generate share link for Hysteria2
+    Link {
+        /// User name (defaults to first user)
+        #[arg(short = 'u', long = "name")]
+        name: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]

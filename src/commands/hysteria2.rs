@@ -268,3 +268,108 @@ pub fn add_user(
 
     Ok(())
 }
+
+pub fn link(paths: &Paths, name: Option<String>) -> Result<()> {
+    let input_path = paths.get_input_config_path();
+
+    // Detect server IP
+    fn detect_server_ip() -> String {
+        // Try to get from metadata
+        if let Ok(ip) = std::env::var("MIMIC_SERVER_IP") {
+            return ip;
+        }
+        // Try to detect via API
+        if let Ok(resp) = std::process::Command::new("curl")
+            .args(["-s", "-4", "ifconfig.me"])
+            .output()
+        {
+            if let Ok(ip) = String::from_utf8(resp.stdout) {
+                let ip = ip.trim();
+                if !ip.is_empty() && ip.contains('.') {
+                    return ip.to_string();
+                }
+            }
+        }
+        "YOUR_SERVER_IP".to_string()
+    }
+    let config_str = std::fs::read_to_string(input_path)?;
+    let config_json: Value = serde_json::from_str(&config_str)?;
+
+    // Find hy2 inbound
+    let hy2_inbound = config_json
+        .get("inbounds")
+        .and_then(|i| i.as_array())
+        .and_then(|inbounds| {
+            inbounds.iter().find(|i| {
+                i.get("tag")
+                    .and_then(|t| t.as_str())
+                    .map(|t| t == "hy2-in")
+                    .unwrap_or(false)
+            })
+        })
+        .ok_or_else(|| anyhow::anyhow!("Hysteria2 inbound 'hy2-in' not found"))?;
+
+    let port = hy2_inbound
+        .get("listen_port")
+        .and_then(|p| p.as_u64())
+        .unwrap_or(8443) as u16;
+
+    let alpn = hy2_inbound
+        .get("tls")
+        .and_then(|t| t.get("alpn"))
+        .and_then(|a| a.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|a| a.as_str())
+        .unwrap_or("h3");
+
+    // Find user
+    let users = hy2_inbound
+        .get("users")
+        .and_then(|u| u.as_array())
+        .ok_or_else(|| anyhow::anyhow!("No users found in Hysteria2 inbound"))?;
+
+    let user = if let Some(ref n) = name {
+        users
+            .iter()
+            .find(|u| u.get("name").and_then(|v| v.as_str()) == Some(n))
+            .ok_or_else(|| anyhow::anyhow!("User '{}' not found", n))?
+    } else {
+        users.first().ok_or_else(|| anyhow::anyhow!("No users configured"))?
+    };
+
+    let password = user
+        .get("password")
+        .and_then(|p| p.as_str())
+        .ok_or_else(|| anyhow::anyhow!("User has no password"))?;
+
+    let obfuscate = hy2_inbound.get("obfs").is_some();
+
+    // Detect server IP
+    let server_ip = detect_server_ip();
+
+    if obfuscate {
+        println!(
+            "hysteria2://{}@{}:{}?obfs=salamander&obfs-password={}&up={}&down={}&alpn={}#hy2",
+            password,
+            server_ip,
+            port,
+            password,
+            hy2_inbound.get("up_mbps").and_then(|v| v.as_u64()).unwrap_or(100),
+            hy2_inbound.get("down_mbps").and_then(|v| v.as_u64()).unwrap_or(100),
+            alpn
+        );
+    } else {
+        println!(
+            "hysteria2://{}@{}:{}?up={}&down={}&alpn={}#hy2",
+            password,
+            server_ip,
+            port,
+            hy2_inbound.get("up_mbps").and_then(|v| v.as_u64()).unwrap_or(100),
+            hy2_inbound.get("down_mbps").and_then(|v| v.as_u64()).unwrap_or(100),
+            alpn
+        );
+    }
+
+    Ok(())
+}
+
