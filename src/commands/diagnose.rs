@@ -8,73 +8,120 @@ use crate::paths::Paths;
 
 pub fn run(paths: &Paths, verbose: bool) -> Result<()> {
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                                                              ║
-    ║     ███████╗██╗   ██╗██████╗ ███████╗██████╗ ██████╗     ║
-    ║     ██╔════╝██║   ██║██╔══██╗██╔════╝██╔══██╗██╔══██╗    ║
-    ║     ███████╗██║   ██║██████╔╝█████╗  ██████╔╝██████╔╝    ║
-    ║     ╚════██║██║   ██║██╔══██╗██╔══╝  ██╔══██╗██╔══██╗    ║
-    ║     ███████║╚██████╔╝██║  ██║███████╗██║  ██║██║  ██║    ║
-    ║     ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝    ║
-    ║                                                              ║
-    ║               Node Diagnostic Tool v1.0                       ║
-    ╚══════════════════════════════════════════════════════════════╝
+  ███╗   ███╗██╗██████╗ ███████╗██╗    ██╗ █████╗ ██╗   ██╗
+  ████╗ ████║██║██╔══██╗██╔════╝██║    ██║██╔══██╗╚██╗ ██╔╝
+  ██╔████╔██║██║██████╔╝█████╗  ██║ █╗ ██║███████║ ╚████╔╝
+  ██║╚██╔╝██║██║██╔═══╝ ██╔══╝ ██║███╗██║██╔══██║  ╚██╔╝
+  ██║ ╚═╝ ██║██║██║     ███████╗╚███╔███╔╝██║  ██║   ██║
+  ╚═╝     ╚═╝╚═╝╚═╝     ╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝
 "#);
 
-    println!("{}\n", "  Running diagnostics...\n".dimmed());
+    println!("{} System Health Check\n", "  Mimic-Node Diagnostic".cyan().bold());
+    println!("  ───────────────────────────────────────\n");
 
-    let mut all_passed = true;
+    let mut warnings = 0;
 
     // System Checks
-    println!("{}", "  [System Checks]".cyan().bold());
-    all_passed &= check_overlay_mount(paths, verbose);
-    all_passed &= check_config_exists(paths, verbose);
-    all_passed &= check_sing_box_installed(verbose);
+    println!("  {}", "System".cyan().bold());
+    if check_overlay_mount(paths, verbose) {
+        println!("    {} OverlayFS mounted", "●".green());
+    } else {
+        println!("    {} OverlayFS not mounted", "○".yellow());
+        warnings += 1;
+    }
+    if check_config_exists(paths, verbose) {
+        println!("    {} Config files present", "●".green());
+    } else {
+        println!("    {} Config files missing", "○".red());
+        warnings += 1;
+    }
+    if check_sing_box_installed(verbose) {
+        // Already printed in function
+    }
+    println!();
 
     // Network Checks
-    println!("\n{}", "  [Network Checks]".cyan().bold());
-    all_passed &= check_port_listening(443, verbose);
-    all_passed &= check_firewall_rules(verbose);
-    all_passed &= check_protocol_sniffing(paths, verbose);
+    println!("  {}", "Network".cyan().bold());
+    if check_port_listening(443, verbose) {
+        println!("    {} Port 443 listening", "●".green());
+    } else {
+        println!("    {} Port 443 not listening", "○".yellow());
+        warnings += 1;
+    }
+    if check_firewall_rules(verbose) {
+        println!("    {} Firewall rules OK", "●".green());
+    } else {
+        warnings += 1;
+    }
+    if check_protocol_sniffing(paths, verbose) {
+        println!("    {} Protocol sniffing enabled", "●".green());
+    } else {
+        println!("    {} Protocol sniffing disabled", "○".yellow());
+        warnings += 1;
+    }
+    if check_hysteria2(paths, verbose) {
+        // Already printed in function
+    } else {
+        warnings += 1;
+    }
+    println!();
 
-    // TLS Checks
-    println!("\n{}", "  [TLS Checks]".cyan().bold());
-    all_passed &= check_tls_certificate(paths, verbose);
-    all_passed &= check_reality_keys(paths, verbose);
+    // TLS & Security
+    println!("  {}", "Security".cyan().bold());
+    if check_tls_certificate(paths, verbose) {
+        println!("    {} TLS certificates OK", "●".green());
+    } else {
+        println!("    {} TLS certificates missing", "○".yellow());
+        warnings += 1;
+    }
+    if check_reality_keys(paths, verbose) {
+        println!("    {} Reality keys configured", "●".green());
+    } else {
+        println!("    {} Reality keys missing", "○".yellow());
+        warnings += 1;
+    }
+    if check_permission_settings(paths, verbose) {
+        println!("    {} File permissions OK", "●".green());
+    } else {
+        println!("    {} File permissions issue", "○".yellow());
+        warnings += 1;
+    }
+    println!();
 
-    // Deprecated Features Check
-    println!("\n{}", "  [Deprecated Features Check]".cyan().bold());
-    all_passed &= check_deprecated_features(paths, verbose);
+    // Performance
+    println!("  {}", "Performance".cyan().bold());
+    if check_kernel_tls_support(verbose) {
+        println!("    {} Kernel TLS support", "●".green());
+    }
+    if check_bbr_enabled(verbose) {
+        println!("    {} BBR congestion control", "●".green());
+    }
+    if check_dns_configuration(paths, verbose) {
+        println!("    {} DNS configuration OK", "●".green());
+    } else {
+        println!("    {} DNS configuration issue", "○".yellow());
+        warnings += 1;
+    }
+    println!();
 
-    // DNS Checks
-    println!("\n{}", "  [DNS Checks]".cyan().bold());
-    all_passed &= check_dns_configuration(paths, verbose);
-
-    // Security Checks
-    println!("\n{}", "  [Security Checks]".cyan().bold());
-    all_passed &= check_permission_settings(paths, verbose);
-    all_passed &= check_recent_commits(verbose);
-
-    // Performance Checks
-    println!("\n{}", "  [Performance Checks]".cyan().bold());
-    all_passed &= check_kernel_tls_support(verbose);
-    all_passed &= check_bbr_enabled(verbose);
+    // Deprecations
+    let deprecation_issues = check_deprecated_features(paths, verbose);
+    if !deprecation_issues {
+        println!("    {} No deprecated features", "●".green());
+    } else {
+        warnings += 1;
+    }
+    println!();
 
     // Summary
-    println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    "#);
-
-    if all_passed {
-        println!("{}", format!("    ║                    {} All Checks Passed! {}                  ║", "All Checks Passed!".green(), "[OK]".green()));
+    println!("  ───────────────────────────────────────");
+    if warnings == 0 {
+        println!("  {} All checks passed!", "●".green());
     } else {
-        println!("{}", format!("    ║                    {} Some Checks Failed {}                  ║", "Some Checks Failed!".yellow(), "[WARN]".yellow()));
-        println!("{}", format!("    ║       {} Run with --verbose for detailed information{}        ║", "Run with --verbose".yellow(), "[INFO]".cyan()));
+        println!("  {} {} warning(s)", "○".yellow(), warnings);
+        println!("  {} Run with --verbose for details", "Tip:".dimmed());
     }
-
-    println!(r#"
-    ╚══════════════════════════════════════════════════════════════╝
-"#);
+    println!();
 
     Ok(())
 }
@@ -785,4 +832,43 @@ fn check_deprecated_18(config: &serde_json::Value, verbose: bool) -> Vec<String>
         println!("\n      {} sing-box 1.8.0 deprecations:", "[*]".cyan());
     }
     issues
+}
+
+fn check_hysteria2(paths: &Paths, verbose: bool) -> bool {
+    print!("  Checking Hysteria2 configuration... ");
+
+    if let Ok(config_str) = fs::read_to_string(paths.get_input_config_path()) {
+        if let Ok(config) = serde_json::from_str::<serde_json::Value>(&config_str) {
+            if let Some(inbounds) = config.get("inbounds").and_then(|i| i.as_array()) {
+                if let Some(hy2) = inbounds.iter().find(|i| {
+                    i.get("type") == Some(&serde_json::Value::String("hysteria2".to_string()))
+                }) {
+                    let port = hy2.get("listen_port").and_then(|p| p.as_u64()).unwrap_or(8443);
+                    let has_obfs = hy2.get("obfs").is_some();
+                    let has_limits = hy2.get("up_mbps").is_some() || hy2.get("down_mbps").is_some();
+                    let has_server_name = hy2.get("tls")
+                        .and_then(|t| t.get("server_name"))
+                        .and_then(|s| s.as_str())
+                        .filter(|s| !s.is_empty())
+                        .is_some();
+
+                    println!("{}", "[OK]".green());
+                    if verbose {
+                        println!("      {} Port: {}", "[*]".cyan(), port);
+                        println!("      {} Obfuscation: {}", "[*]".cyan(), if has_obfs { "enabled" } else { "disabled" });
+                        println!("      {} Speed Limits: {}", "[*]".cyan(), if has_limits { "set" } else { "unlimited" });
+                        println!("      {} Domain: {}", "[*]".cyan(), if has_server_name {
+                            hy2.get("tls").and_then(|t| t.get("server_name")).and_then(|s| s.as_str()).unwrap_or("N/A")
+                        } else { "using IP" });
+                    }
+                    return true;
+                }
+            }
+        }
+    }
+    println!("{}", "[INFO]".cyan());
+    if verbose {
+        println!("      {} No Hysteria2 inbound configured", "[*]".cyan());
+    }
+    true // Not critical
 }
