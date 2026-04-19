@@ -40,6 +40,10 @@ pub enum Hysteria2Commands {
         #[arg(long = "obfs")]
         obfs: bool,
 
+        /// Obfs password (auto-generated if not provided when obfs is enabled)
+        #[arg(long = "obfs-password")]
+        obfs_password: Option<String>,
+
         /// HTTP2 idle timeout (golang Duration format, e.g. "60s")
         #[arg(long = "http2-idle-timeout")]
         http2_idle_timeout: Option<String>,

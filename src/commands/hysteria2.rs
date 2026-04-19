@@ -73,6 +73,7 @@ pub fn setup(
     up_mbps: Option<u32>,
     down_mbps: Option<u32>,
     obfs: bool,
+    obfs_password: Option<String>,
     http2_idle_timeout: Option<String>,
     http2_keep_alive_period: Option<String>,
     http2_max_concurrent_streams: Option<u32>,
@@ -85,7 +86,11 @@ pub fn setup(
     let mut config_json: Value = serde_json::from_str(&config_str)?;
 
     let pwd = password.clone().unwrap_or_else(|| generate_password(32));
-    let obfs_pwd = if obfs { Some(generate_obfs_password()) } else { None };
+    let obfs_pwd = if obfs {
+        Some(obfs_password.unwrap_or_else(generate_obfs_password))
+    } else {
+        None
+    };
 
     let cert = certificate_path.clone().unwrap_or_else(|| "/path/to/cert.crt".to_string());
     let key = key_path.clone().unwrap_or_else(|| "/path/to/cert.key".to_string());
