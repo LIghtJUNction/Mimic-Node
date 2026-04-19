@@ -76,8 +76,7 @@
         "server_name": "learn.microsoft.com",
         "certificate_path": "/path/to/cert.pem",
         "key_path": "/path/to/key.pem",
-        "alpn": ["h2"],
-        "handshake_timeout": "15s"
+        "alpn": ["h2"]
       }
     },
     {
@@ -97,12 +96,9 @@
         "enabled": true,
         "alpn": ["h3"],
         "certificate_path": "/path/to/cert.pem",
-        "key_path": "/path/to/key.pem",
-        "handshake_timeout": "15s"
+        "key_path": "/path/to/key.pem"
       },
       "masquerade": "https://microsoft.com",
-      "brutal_debug": false,
-      "bbr_profile": "aggressive",
       "obfs": {
         "type": "salamander",
         "password": "mimic-node-default"
@@ -118,8 +114,6 @@
       "tcp_keep_alive_interval": "75s",
       "users": [],
       "congestion_control": "bbr",
-      "udp_relay_mode": "native",
-      "udp_over_tcp": true,
       "tls": {
         "enabled": true,
         "server_name": "example.com",
@@ -161,7 +155,6 @@
       "protocol": "h2",
       "post_quantum": false,
       "edge_ip_version": 0,
-      "grace_period": "",
       "region": "",
       "control_dialer": {
         "bind_interface": "",
@@ -261,8 +254,6 @@
       "uuid": "",
       "password": "",
       "congestion_control": "bbr",
-      "udp_relay_mode": "native",
-      "udp_over_tcp": false,
       "tls": {
         "enabled": true,
         "server_name": "example.com",
