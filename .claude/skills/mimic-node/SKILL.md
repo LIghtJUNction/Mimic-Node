@@ -233,11 +233,35 @@ sudo mimictl diagnose --verbose
 ### Hysteria2
 ```bash
 # Setup Hysteria2 inbound
-sudo mimictl hysteria2 setup --port 443 --masquerade microsoft.com --up 100 --down 200
+sudo mimictl hysteria2 setup --port 8443 --masquerade microsoft.com
 
 # Add Hysteria2 user
 sudo mimictl hysteria2 add-user --name alice
+
+# Generate Hysteria2 link
+sudo mimictl hysteria2 link
 ```
+
+#### Using Domain Names
+
+Using a domain name for Hysteria2 is recommended for secure TLS certificate validation:
+
+```bash
+# Generate link and replace IP with domain
+sudo mimictl hysteria2 link | sed 's/45.59.187.63/api.lightjunction.online/g'
+```
+
+#### TLS Certificate Errors?
+
+If you don't have your own domain and used a random domain (like `bing.com`) as masquerade, clients will show TLS errors.
+
+**When using Daed:**
+1. After adding the node, click the Edit button
+2. Find the "Allow Insecure" checkbox and check it
+
+**If you have your own domain:**
+1. Configure Let's Encrypt certificate (e.g., `api.lightjunction.online`)
+2. Use the domain to connect, no need to check "Allow Insecure"
 
 ### DNS
 ```bash

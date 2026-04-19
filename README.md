@@ -236,11 +236,35 @@ sudo mimictl diagnose --verbose
 
 ```bash
 # 设置 Hysteria2 入站
-sudo mimictl hysteria2 setup --port 443 --masquerade microsoft.com --up 100 --down 200
+sudo mimictl hysteria2 setup --port 8443 --masquerade microsoft.com
 
 # 添加 Hysteria2 用户
 sudo mimictl hysteria2 add-user --name alice
+
+# 生成 Hysteria2 链接
+sudo mimictl hysteria2 link
 ```
+
+#### 使用域名
+
+推荐使用域名连接 Hysteria2，这样证书验证更安全：
+
+```bash
+# 生成链接后，手动替换 IP 为域名
+sudo mimictl hysteria2 link | sed 's/45.59.187.63/api.lightjunction.online/g'
+```
+
+#### TLS 证书错误怎么办？
+
+如果你没有自己的域名，使用了随机域名（如 `bing.com`）作为伪装，客户端会提示 TLS 错误。
+
+**使用 Daed 时：**
+1. 添加完节点后，点击编辑按钮
+2. 找到「允许不安全」勾选框，勾选即可
+
+**如果你有自己的域名：**
+1. 配置 Let's Encrypt 证书（如 `api.lightjunction.online`）
+2. 使用域名连接，不需要勾选「允许不安全」
 
 ### DNS 管理
 
