@@ -21,7 +21,7 @@ pub fn run(paths: &Paths, verbose: bool) -> Result<()> {
 
     let mut warnings = 0;
 
-    // System Checks
+    // System
     println!("  {}", "System".cyan().bold());
     if check_overlay_mount(paths, verbose) {
         println!("    {} OverlayFS mounted", "●".green());
@@ -35,12 +35,10 @@ pub fn run(paths: &Paths, verbose: bool) -> Result<()> {
         println!("    {} Config files missing", "○".red());
         warnings += 1;
     }
-    if check_sing_box_installed(verbose) {
-        // Already printed in function
-    }
+    check_sing_box_installed(verbose);
     println!();
 
-    // Network Checks
+    // Network
     println!("  {}", "Network".cyan().bold());
     if check_port_listening(443, verbose) {
         println!("    {} Port 443 listening", "●".green());
@@ -48,25 +46,17 @@ pub fn run(paths: &Paths, verbose: bool) -> Result<()> {
         println!("    {} Port 443 not listening", "○".yellow());
         warnings += 1;
     }
-    if check_firewall_rules(verbose) {
-        println!("    {} Firewall rules OK", "●".green());
-    } else {
-        warnings += 1;
-    }
+    check_firewall_rules(verbose);
     if check_protocol_sniffing(paths, verbose) {
         println!("    {} Protocol sniffing enabled", "●".green());
     } else {
         println!("    {} Protocol sniffing disabled", "○".yellow());
         warnings += 1;
     }
-    if check_hysteria2(paths, verbose) {
-        // Already printed in function
-    } else {
-        warnings += 1;
-    }
+    check_hysteria2(paths, verbose);
     println!();
 
-    // TLS & Security
+    // Security
     println!("  {}", "Security".cyan().bold());
     if check_tls_certificate(paths, verbose) {
         println!("    {} TLS certificates OK", "●".green());
@@ -90,12 +80,8 @@ pub fn run(paths: &Paths, verbose: bool) -> Result<()> {
 
     // Performance
     println!("  {}", "Performance".cyan().bold());
-    if check_kernel_tls_support(verbose) {
-        println!("    {} Kernel TLS support", "●".green());
-    }
-    if check_bbr_enabled(verbose) {
-        println!("    {} BBR congestion control", "●".green());
-    }
+    check_kernel_tls_support(verbose);
+    check_bbr_enabled(verbose);
     if check_dns_configuration(paths, verbose) {
         println!("    {} DNS configuration OK", "●".green());
     } else {
@@ -104,9 +90,8 @@ pub fn run(paths: &Paths, verbose: bool) -> Result<()> {
     }
     println!();
 
-    // Deprecations
-    let deprecation_issues = check_deprecated_features(paths, verbose);
-    if !deprecation_issues {
+    // Deprecated
+    if !check_deprecated_features(paths, verbose) {
         println!("    {} No deprecated features", "●".green());
     } else {
         warnings += 1;
@@ -127,7 +112,6 @@ pub fn run(paths: &Paths, verbose: bool) -> Result<()> {
 }
 
 fn check_overlay_mount(paths: &Paths, verbose: bool) -> bool {
-    print!("  Checking OverlayFS mount... ");
     if paths.root == Path::new("/") {
         let mount_target = "/etc/sing-box";
         let is_mounted = Command::new("mountpoint")
@@ -138,13 +122,11 @@ fn check_overlay_mount(paths: &Paths, verbose: bool) -> bool {
             .unwrap_or(false);
 
         if is_mounted {
-            println!("{}", "[OK]".green());
             if verbose {
                 println!("      {} Mounted at {}", "[*]".cyan(), mount_target);
             }
             true
         } else {
-            println!("{}", "[WARN]".yellow());
             if verbose {
                 println!("      {} OverlayFS not mounted at {}", "[!]".yellow(), mount_target);
                 println!("      {} Run: sudo systemctl start mimic-node-mount", "[>]".cyan());
@@ -152,53 +134,50 @@ fn check_overlay_mount(paths: &Paths, verbose: bool) -> bool {
             false
         }
     } else {
-        println!("{}", "[SKIP]".dimmed());
-        println!("      {} Running in non-system mode", "[*]".cyan());
+        if verbose {
+            println!("      {} Running in non-system mode", "[*]".cyan());
+        }
         true
     }
 }
 
 fn check_config_exists(paths: &Paths, verbose: bool) -> bool {
-    print!("  Checking config files... ");
     let config_exists = paths.config.exists() || paths.staging.exists();
     let default_exists = paths.default_config.exists();
 
     if config_exists && default_exists {
-        println!("{}", "[OK]".green());
-        if let Some(p) = paths.get_input_config_path().to_str()
-            && verbose {
+        if verbose {
+            if let Some(p) = paths.get_input_config_path().to_str() {
                 println!("      {} Config: {}", "[*]".cyan(), p);
             }
+        }
         true
     } else {
-        println!("{}", "[ERROR]".red());
-        println!("      {} Config exists: {}", "[!]".red(), config_exists);
-        println!("      {} Default config exists: {}", "[!]".red(), default_exists);
+        if verbose {
+            println!("      {} Config exists: {}", "[!]".red(), config_exists);
+            println!("      {} Default config exists: {}", "[!]".red(), default_exists);
+        }
         false
     }
 }
 
 fn check_sing_box_installed(verbose: bool) -> bool {
-    print!("  Checking sing-box installation... ");
     let output = Command::new("sing-box")
         .args(["version"])
         .output();
 
     match output {
         Ok(o) if o.status.success() => {
-            let version = String::from_utf8_lossy(&o.stdout);
-            let first_line = version.lines().next().unwrap_or("unknown");
-            println!("{}", "[OK]".green());
             if verbose {
-                println!("      {} {}", "[*]".cyan(), first_line);
+                let version = String::from_utf8_lossy(&o.stdout);
+                let first_line = version.lines().next().unwrap_or("unknown");
+                println!("    {} {}", "●".green(), first_line);
             }
             true
         }
         _ => {
-            println!("{}", "[ERROR]".red());
             if verbose {
-                println!("      {} sing-box not found or failed to run", "[!]".red());
-                println!("      {} Install: sudo systemctl enable sing-box", "[>]".cyan());
+                println!("    {} sing-box not found", "○".red());
             }
             false
         }
@@ -206,7 +185,7 @@ fn check_sing_box_installed(verbose: bool) -> bool {
 }
 
 fn check_port_listening(port: u16, verbose: bool) -> bool {
-    print!("  Checking port {} listening... ", port);
+    print!("checking port {}...", port);
     let output = Command::new("ss")
         .args(["-tlnp"])
         .output();
