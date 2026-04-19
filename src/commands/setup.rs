@@ -9,19 +9,14 @@ use crate::paths::Paths;
 pub fn interactive(paths: &Paths) -> Result<()> {
     clear_screen();
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                                                              ║
-    ║     ███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗           ║
-    ║     ████╗  ██║██╔════╝╚██╗██╔╝██║   ██║██╔════╝           ║
-    ║     ██╔██╗ ██║█████╗   ╚███╔╝ ██║   ██║███████╗           ║
-    ║     ██║╚██╗██║██╔══╝   ██╔██╗ ██║   ██║╚════██║           ║
-    ║     ██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝███████║           ║
-    ║     ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝           ║
-    ║                                                              ║
-    ║            Node Setup Wizard v1.0                            ║
-    ║                                                              ║
-    ╚══════════════════════════════════════════════════════════════╝
+    ███╗   ███╗██╗██████╗ ███████╗██╗    ██╗ █████╗ ██╗   ██╗
+    ████╗ ████║██║██╔══██╗██╔════╝██║    ██║██╔══██╗╚██╗ ██╔╝
+    ██╔████╔██║██║██████╔╝█████╗  ██║ █╗ ██║███████║ ╚████╔╝
+    ██║╚██╔╝██║██║██╔═══╝ ██╔══╝ ██║███╗██║██╔══██║  ╚██╔╝
+    ██║ ╚═╝ ██║██║██║     ███████╗╚███╔███╔╝██║  ██║   ██║
+    ╚═╝     ╚═╝╚═╝╚═╝     ╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝
     "#);
+    println!("{}", "  Mimic-Node Setup Wizard v1.0\n".white());
 
     println!("{}", "  Welcome to Mimic-Node Interactive Setup!\n".white());
     println!("{}", "  This wizard will guide you through node configuration.\n".dimmed());
@@ -70,25 +65,25 @@ pub fn interactive(paths: &Paths) -> Result<()> {
 
 fn show_main_menu() {
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                    Main Menu                                   ║
-    ╠══════════════════════════════════════════════════════════════╣
-    ║  [1] Start Setup              - Configure new node            ║
-    ║  [2] User Management         - Add/Remove/List users        ║
-    ║  [3] View Current Config     - Show active configuration    ║
-    ║  [4] Interactive Config Editor - Edit with recommendations  ║
-    ║  [5] Generate Keys           - Generate Reality keypair       ║
-    ║  [0] Exit                   - Quit setup                    ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│              Mimic-Node Main Menu              │
+├─────────────────────────────────────────────────┤
+│  [1] ● Start Setup          Configure new node  │
+│  [2] ● User Management      Add/Remove/List    │
+│  [3] ● View Current Config  Show configuration  │
+│  [4] ● Interactive Editor   Edit with hints     │
+│  [5] ● Generate Keys        Reality keypair      │
+│  [0] ○ Exit                 Quit setup           │
+╰─────────────────────────────────────────────────╯
 "#);
 }
 
 fn run_setup_wizard(_paths: &Paths) -> Result<()> {
     clear_screen();
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                    Node Setup Wizard                           ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│              Node Setup Wizard                  │
+╰─────────────────────────────────────────────────╯
 "#);
 
     println!("{}", "  Welcome! This wizard will help you configure your node.\n".white());
@@ -181,9 +176,9 @@ fn run_setup_wizard(_paths: &Paths) -> Result<()> {
     // Summary and Confirmation
     clear_screen();
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                    Configuration Summary                     ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│            Configuration Summary                 │
+╰─────────────────────────────────────────────────╯
 "#);
 
     println!("\n  Protocols:");
@@ -227,12 +222,12 @@ fn run_setup_wizard(_paths: &Paths) -> Result<()> {
 
     println!(r#"
 
-    ╔══════════════════════════════════════════════════════════════╗
-    ║  This will create a staging config at:                       ║
-    ║  /var/lib/mimic-node/staging/config.json                    ║
-    ║                                                               ║
-    ║  After setup, run 'mimictl apply' to activate.              ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│  This will create a staging config at:          │
+│  /var/lib/mimic-node/staging/config.json        │
+│                                                  │
+│  After setup, run 'mimictl apply' to activate.  │
+╰─────────────────────────────────────────────────╯
 "#);
 
     let confirm = prompt_yes_no("\n  Create this configuration?", true)?;
@@ -400,9 +395,9 @@ fn user_management(paths: &Paths) -> Result<()> {
     loop {
         clear_screen();
         println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                    User Management                           ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│              User Management                    │
+╰─────────────────────────────────────────────────╯
 "#);
 
         let options = [
@@ -440,9 +435,9 @@ fn user_management(paths: &Paths) -> Result<()> {
 fn list_users(paths: &Paths) -> Result<()> {
     clear_screen();
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                    User List                                  ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│              User List                          │
+╰─────────────────────────────────────────────────╯
 "#);
 
     // Use existing user list command
@@ -473,9 +468,9 @@ fn list_users(paths: &Paths) -> Result<()> {
 fn add_new_user(_paths: &Paths) -> Result<()> {
     clear_screen();
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                    Add New User                              ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│              Add New User                       │
+╰─────────────────────────────────────────────────╯
 "#);
 
     let email = prompt_input("  User email", None)?;
@@ -507,9 +502,9 @@ fn add_new_user(_paths: &Paths) -> Result<()> {
 fn remove_user(_paths: &Paths) -> Result<()> {
     clear_screen();
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                    Remove User                               ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│              Remove User                        │
+╰─────────────────────────────────────────────────╯
 "#);
 
     let target = prompt_input("  User email or pattern (e.g., *@example.com)", None)?;
@@ -537,9 +532,9 @@ fn remove_user(_paths: &Paths) -> Result<()> {
 fn reset_user(_paths: &Paths) -> Result<()> {
     clear_screen();
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                    Reset User UUID/SID                       ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│            Reset User UUID/SID                   │
+╰─────────────────────────────────────────────────╯
 "#);
 
     let target = prompt_input("  User email or pattern", None)?;
@@ -567,9 +562,9 @@ fn reset_user(_paths: &Paths) -> Result<()> {
 fn view_current_config(paths: &Paths) -> Result<()> {
     clear_screen();
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                    Current Configuration                      ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│          Current Configuration                   │
+╰─────────────────────────────────────────────────╯
 "#);
 
     let config_str = std::fs::read_to_string(paths.get_input_config_path())?;
@@ -584,9 +579,9 @@ fn view_current_config(paths: &Paths) -> Result<()> {
 fn generateRealityKeys(_paths: &Paths) -> Result<()> {
     clear_screen();
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                    Generate Reality Keys                      ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│           Generate Reality Keys                  │
+╰─────────────────────────────────────────────────╯
 "#);
 
     let output = Command::new("mimictl")
@@ -610,9 +605,9 @@ fn interactive_config_editor(paths: &Paths) -> Result<()> {
     loop {
         clear_screen();
         println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║              Interactive Config Editor                        ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│         Interactive Config Editor                │
+╰─────────────────────────────────────────────────╯
 "#);
 
         let config_str = std::fs::read_to_string(paths.get_input_config_path())?;
@@ -653,9 +648,9 @@ fn interactive_config_editor(paths: &Paths) -> Result<()> {
 fn edit_dns_settings(config: &serde_json::Value, _paths: &Paths) -> Result<()> {
     clear_screen();
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                    DNS Settings                              ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│              DNS Settings                        │
+╰─────────────────────────────────────────────────╯
 "#);
 
     if let Some(dns) = config.get("dns") {
@@ -682,14 +677,14 @@ fn edit_dns_settings(config: &serde_json::Value, _paths: &Paths) -> Result<()> {
         }
 
         println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                    Recommendations                            ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│              Recommendations                       │
+╰─────────────────────────────────────────────────╯
 
-  [1] Enable DNS over H3 (DoH3)     - Encrypt DNS queries, recommended
-  [2] Add encrypted DNS servers     - Use DoT/DoQ for better privacy
-  [3] Optimize DNS strategy         - Set prefer_ipv4 for better routing
-  [0] Back
+  [1] ● Enable DNS over H3 (DoH3)    Encrypt DNS queries
+  [2] ● Add encrypted DNS servers    Use DoT/DoQ for privacy
+  [3] ● Optimize DNS strategy        Set prefer_ipv4 routing
+  [0] ○ Back
 "#);
 
         let choice = prompt_input("  Select action", Some("0".to_string()))?;
@@ -717,9 +712,9 @@ fn edit_dns_settings(config: &serde_json::Value, _paths: &Paths) -> Result<()> {
 fn edit_vless_inbound(config: &serde_json::Value, _paths: &Paths) -> Result<()> {
     clear_screen();
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║              VLESS + Reality Inbound                          ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│           VLESS + Reality Inbound                 │
+╰─────────────────────────────────────────────────╯
 "#);
 
     if let Some(inbounds) = config.get("inbounds").and_then(|i| i.as_array())
@@ -766,15 +761,15 @@ fn edit_vless_inbound(config: &serde_json::Value, _paths: &Paths) -> Result<()> 
         }
 
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                    Recommendations                            ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│              Recommendations                       │
+╰─────────────────────────────────────────────────╯
 
-  [1] Generate Reality Keys        - Required for VLESS to work
-  [2] Add User                    - Add new VLESS user
-  [3] Enable Multiplex Brute      - Better throughput via compression
-  [4] Optimize TCP Settings       - TFO, keep-alive for performance
-  [0] Back
+  [1] ● Generate Reality Keys     Required for VLESS
+  [2] ● Add User                  Add new VLESS user
+  [3] ● Enable Multiplex Brute     Better throughput
+  [4] ● Optimize TCP Settings     TFO, keep-alive
+  [0] ○ Back
 "#);
 
     let choice = prompt_input("  Select action", Some("0".to_string()))?;
@@ -807,9 +802,9 @@ fn edit_vless_inbound(config: &serde_json::Value, _paths: &Paths) -> Result<()> 
 fn edit_hysteria2_inbound(config: &serde_json::Value, _paths: &Paths) -> Result<()> {
     clear_screen();
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║              Hysteria2 Inbound                               ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│              Hysteria2 Inbound                     │
+╰─────────────────────────────────────────────────╯
 "#);
 
     if let Some(inbounds) = config.get("inbounds").and_then(|i| i.as_array())
@@ -846,15 +841,15 @@ fn edit_hysteria2_inbound(config: &serde_json::Value, _paths: &Paths) -> Result<
         }
 
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                    Recommendations                            ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│              Recommendations                       │
+╰─────────────────────────────────────────────────╯
 
-  [1] Setup Hysteria2              - Configure port, password, domain
-  [2] Add User                     - Add new Hysteria2 user
-  [3] Enable BBR                   - Better congestion control
-  [4] Optimize Bandwidth           - Adjust up/down Mbps settings
-  [0] Back
+  [1] ● Setup Hysteria2            Configure port, password
+  [2] ● Add User                   Add new Hysteria2 user
+  [3] ● Enable BBR                 Better congestion control
+  [4] ● Optimize Bandwidth         Adjust up/down Mbps
+  [0] ○ Back
 "#);
 
     let choice = prompt_input("  Select action", Some("0".to_string()))?;
@@ -883,9 +878,9 @@ fn edit_hysteria2_inbound(config: &serde_json::Value, _paths: &Paths) -> Result<
 fn edit_tun_inbound(config: &serde_json::Value, _paths: &Paths) -> Result<()> {
     clear_screen();
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║              TUN (System VPN) Inbound                         ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│           TUN (System VPN) Inbound                │
+╰─────────────────────────────────────────────────╯
 "#);
 
     if let Some(inbounds) = config.get("inbounds").and_then(|i| i.as_array())
@@ -915,16 +910,16 @@ fn edit_tun_inbound(config: &serde_json::Value, _paths: &Paths) -> Result<()> {
         }
 
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                    Recommendations                            ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│              Recommendations                       │
+╰─────────────────────────────────────────────────╯
 
-  [1] Enable System Proxy          - Route all traffic through VPN
-  [2] Optimize MTU                 - Default 9000 is optimal for most
-  [3] Enable Strict Route         - Prevent leaks, recommended
-  [4] Configure DNS               - Set custom DNS for TUN
-  [5] TunnelVision Advisory       - CVE-2024-3661 Security notice
-  [0] Back
+  [1] ● Enable System Proxy        Route all traffic VPN
+  [2] ● Optimize MTU              Default 9000 optimal
+  [3] ● Enable Strict Route        Prevent leaks
+  [4] ● Configure DNS              Set custom DNS for TUN
+  [5] ● TunnelVision Advisory      CVE-2024-3661 notice
+  [0] ○ Back
 "#);
 
     let choice = prompt_input("  Select action", Some("0".to_string()))?;
@@ -986,9 +981,9 @@ fn edit_tun_inbound(config: &serde_json::Value, _paths: &Paths) -> Result<()> {
 fn edit_ssh_inbound(config: &serde_json::Value, _paths: &Paths) -> Result<()> {
     clear_screen();
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║              SSH Inbound                                     ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│              SSH Inbound                          │
+╰─────────────────────────────────────────────────╯
 "#);
 
     if let Some(inbounds) = config.get("inbounds").and_then(|i| i.as_array())
@@ -1013,14 +1008,14 @@ fn edit_ssh_inbound(config: &serde_json::Value, _paths: &Paths) -> Result<()> {
         }
 
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                    Recommendations                            ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│              Recommendations                       │
+╰─────────────────────────────────────────────────╯
 
-  [1] Change Default Port          - Port 22 is commonly targeted
-  [2] Add SSH User                 - Add new SSH user
-  [3] Enable Strict Auth           - Use key-based authentication
-  [0] Back
+  [1] ● Change Default Port        Port 22 targeted often
+  [2] ● Add SSH User               Add new SSH user
+  [3] ● Enable Strict Auth         Key-based authentication
+  [0] ○ Back
 "#);
 
     let choice = prompt_input("  Select action", Some("0".to_string()))?;
@@ -1046,9 +1041,9 @@ fn edit_ssh_inbound(config: &serde_json::Value, _paths: &Paths) -> Result<()> {
 fn edit_outbound_direct(config: &serde_json::Value, _paths: &Paths) -> Result<()> {
     clear_screen();
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║              Outbound Direct                                 ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│              Outbound Direct                      │
+╰─────────────────────────────────────────────────╯
 "#);
 
     if let Some(outbounds) = config.get("outbounds").and_then(|o| o.as_array())
@@ -1073,15 +1068,15 @@ fn edit_outbound_direct(config: &serde_json::Value, _paths: &Paths) -> Result<()
         }
 
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                    Recommendations                            ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│              Recommendations                       │
+╰─────────────────────────────────────────────────╯
 
-  [1] Enable BBR                   - Better congestion control
-  [2] Optimize TFO                - TCP Fast Open reduces latency
-  [3] Set Domain Strategy         - prefer_ipv4 for better routing
-  [4] Bind Interface              - Force traffic through specific NIC
-  [0] Back
+  [1] ● Enable BBR                Better congestion control
+  [2] ● Optimize TFO              TCP Fast Open reduces latency
+  [3] ● Set Domain Strategy        prefer_ipv4 routing
+  [4] ● Bind Interface             Force traffic through NIC
+  [0] ○ Back
 "#);
 
     let choice = prompt_input("  Select action", Some("0".to_string()))?;
@@ -1112,9 +1107,9 @@ fn edit_outbound_direct(config: &serde_json::Value, _paths: &Paths) -> Result<()
 fn edit_route_rules(config: &serde_json::Value, _paths: &Paths) -> Result<()> {
     clear_screen();
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║              Route Rules                                     ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│              Route Rules                          │
+╰─────────────────────────────────────────────────╯
 "#);
 
     println!("{}", "  Current Route Configuration:".cyan().bold());
@@ -1149,15 +1144,15 @@ fn edit_route_rules(config: &serde_json::Value, _paths: &Paths) -> Result<()> {
     }
 
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                    Recommendations                            ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│              Recommendations                       │
+╰─────────────────────────────────────────────────╯
 
-  [1] Update Rule Sets            - Download latest geo data
-  [2] Add Custom Rule             - Block/allow specific domains
-  [3] Enable IPv6 Routing         - Route IPv6 through proxy
-  [4] Configure Domain Strategy    - Set DNS resolution strategy
-  [0] Back
+  [1] ● Update Rule Sets          Download latest geo data
+  [2] ● Add Custom Rule           Block/allow domains
+  [3] ● Enable IPv6 Routing       Route IPv6 through proxy
+  [4] ● Configure Domain Strategy Set DNS strategy
+  [0] ○ Back
 "#);
 
     let choice = prompt_input("  Select action", Some("0".to_string()))?;
@@ -1191,9 +1186,9 @@ fn edit_route_rules(config: &serde_json::Value, _paths: &Paths) -> Result<()> {
 fn edit_services(config: &serde_json::Value, _paths: &Paths) -> Result<()> {
     clear_screen();
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║              Services & API                                   ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│              Services & API                       │
+╰─────────────────────────────────────────────────╯
 "#);
 
     println!("{}", "  Current Services:".cyan().bold());
@@ -1218,14 +1213,14 @@ fn edit_services(config: &serde_json::Value, _paths: &Paths) -> Result<()> {
     }
 
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                    Recommendations                            ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│              Recommendations                       │
+╰─────────────────────────────────────────────────╯
 
-  [1] Enable SSM API              - Required for some management features
-  [2] Configure Local DNS         - Setup DoH3 resolver
-  [3] Change API Port             - Use non-standard port for security
-  [0] Back
+  [1] ● Enable SSM API           Required for management
+  [2] ● Configure Local DNS       Setup DoH3 resolver
+  [3] ● Change API Port           Non-standard for security
+  [0] ○ Back
 "#);
 
     let choice = prompt_input("  Select action", Some("0".to_string()))?;
@@ -1252,9 +1247,9 @@ fn edit_services(config: &serde_json::Value, _paths: &Paths) -> Result<()> {
 fn edit_experimental(config: &serde_json::Value, _paths: &Paths) -> Result<()> {
     clear_screen();
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║              Experimental (Clash API)                         ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│           Experimental (Clash API)                │
+╰─────────────────────────────────────────────────╯
 "#);
 
     println!("{}", "  Current Experimental Configuration:".cyan().bold());
@@ -1283,15 +1278,15 @@ fn edit_experimental(config: &serde_json::Value, _paths: &Paths) -> Result<()> {
     }
 
     println!(r#"
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                    Recommendations                            ║
-    ╚══════════════════════════════════════════════════════════════╝
+╭─────────────────────────────────────────────────╮
+│              Recommendations                       │
+╰─────────────────────────────────────────────────╯
 
-  [1] Enable Clash API            - For use with Clash dashboard
-  [2] Change Secret               - Use strong random secret
-  [3] Configure Default Mode      - Rule/Proxy/Global modes
-  [4] Enable Store Selected        - Remember last used proxy
-  [0] Back
+  [1] ● Enable Clash API          For Clash dashboard
+  [2] ● Change Secret             Use strong random secret
+  [3] ● Configure Default Mode     Rule/Proxy/Global
+  [4] ● Enable Store Selected      Remember last proxy
+  [0] ○ Back
 "#);
 
     let choice = prompt_input("  Select action", Some("0".to_string()))?;
