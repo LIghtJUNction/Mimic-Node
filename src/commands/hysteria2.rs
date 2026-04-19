@@ -277,13 +277,36 @@ pub fn add_user(
 pub fn link(paths: &Paths, name: Option<String>) -> Result<()> {
     let input_path = paths.get_input_config_path();
 
-    // Detect server IP
-    fn detect_server_ip() -> String {
-        // Try to get from metadata
+    // Detect server address (prefer domain from TLS, fallback to IP)
+    fn detect_server_address(hy2_inbound: &Value) -> String {
+        // Try to get from environment variable first
         if let Ok(ip) = std::env::var("MIMIC_SERVER_IP") {
             return ip;
         }
-        // Try to detect via API
+
+        // Try TLS server_name (domain) - preferred for HTTPS certificates
+        if let Some(tls) = hy2_inbound.get("tls") {
+            if let Some(server_name) = tls.get("server_name")
+                .and_then(|s| s.as_str())
+                .filter(|s| !s.is_empty() && !s.starts_with('/')
+                    && (s.contains('.') || *s == "localhost"))
+            {
+                return server_name.to_string();
+            }
+            // Try certificate_path to extract domain
+            if let Some(cert_path) = tls.get("certificate_path")
+                .and_then(|s| s.as_str())
+            {
+                // Path like /etc/letsencrypt/live/api.example.com/fullchain.pem
+                if let Some(domain) = cert_path.split('/').nth(3) {
+                    if domain.contains('.') && domain != "live" {
+                        return domain.to_string();
+                    }
+                }
+            }
+        }
+
+        // Fallback: detect IP via API
         if let Ok(resp) = std::process::Command::new("curl")
             .args(["-s", "-4", "ifconfig.me"])
             .output()
@@ -349,30 +372,37 @@ pub fn link(paths: &Paths, name: Option<String>) -> Result<()> {
 
     let obfuscate = hy2_inbound.get("obfs").is_some();
 
-    // Detect server IP
-    let server_ip = detect_server_ip();
+    // Detect server address (prefer domain, fallback to IP)
+    let server_addr = detect_server_address(hy2_inbound);
+
+    // Get up/down Mbps if set
+    let up_mbps = hy2_inbound.get("up_mbps").and_then(|v| v.as_u64());
+    let down_mbps = hy2_inbound.get("down_mbps").and_then(|v| v.as_u64());
 
     if obfuscate {
-        println!(
-            "hysteria2://{}@{}:{}?obfs=salamander&obfs-password={}&up={}&down={}&alpn={}#hy2",
-            password,
-            server_ip,
-            port,
-            password,
-            hy2_inbound.get("up_mbps").and_then(|v| v.as_u64()).unwrap_or(100),
-            hy2_inbound.get("down_mbps").and_then(|v| v.as_u64()).unwrap_or(100),
-            alpn
-        );
+        if let (Some(up), Some(down)) = (up_mbps, down_mbps) {
+            println!(
+                "hysteria2://{}@{}:{}?obfs=salamander&obfs-password={}&up={}&down={}&alpn={}#hy2",
+                password, server_addr, port, password, up, down, alpn
+            );
+        } else {
+            println!(
+                "hysteria2://{}@{}:{}?obfs=salamander&obfs-password={}&alpn={}#hy2",
+                password, server_addr, port, password, alpn
+            );
+        }
     } else {
-        println!(
-            "hysteria2://{}@{}:{}?up={}&down={}&alpn={}#hy2",
-            password,
-            server_ip,
-            port,
-            hy2_inbound.get("up_mbps").and_then(|v| v.as_u64()).unwrap_or(100),
-            hy2_inbound.get("down_mbps").and_then(|v| v.as_u64()).unwrap_or(100),
-            alpn
-        );
+        if let (Some(up), Some(down)) = (up_mbps, down_mbps) {
+            println!(
+                "hysteria2://{}@{}:{}?up={}&down={}&alpn={}#hy2",
+                password, server_addr, port, up, down, alpn
+            );
+        } else {
+            println!(
+                "hysteria2://{}@{}:{}?alpn={}#hy2",
+                password, server_addr, port, alpn
+            );
+        }
     }
 
     Ok(())
