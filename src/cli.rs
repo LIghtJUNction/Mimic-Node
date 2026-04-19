@@ -389,6 +389,13 @@ pub enum Commands {
     /// Check system status (service, mounts, config)
     Check,
 
+    /// Protect or unprotect important files with immutable attribute
+    Protect {
+        /// Unprotect files (allows modification, use before manual editing)
+        #[arg(short = 'u', long = "unprotect")]
+        unprotect: bool,
+    },
+
     /// Verify configuration integrity (keys, sids, uuids)
     Verify {
         /// Enable verbose output

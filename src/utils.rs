@@ -146,21 +146,33 @@ pub fn apply_staging(paths: &Paths) -> Result<()> {
             }
         }
 
+        // Remove immutable from old config before replacing
+        let _ = remove_immutable(&paths.config);
+
         fs::rename(&paths.staging, &paths.config)?;
         eprintln!(
             "{} Applied staged config -> {:?}",
             "[INFO]".green(),
             paths.config
         );
+
+        // Protect config with immutable attribute
+        protect_file(&paths.config)?;
     }
 
     if paths.staging_pubkey.exists() {
+        // Remove immutable from old pubkey before replacing
+        let _ = remove_immutable(&paths.pubkey);
+
         fs::rename(&paths.staging_pubkey, &paths.pubkey)?;
         eprintln!(
             "{} Applied staged PUBKEY -> {:?}",
             "[INFO]".green(),
             paths.pubkey
         );
+
+        // Protect pubkey with immutable attribute
+        protect_file(&paths.pubkey)?;
     }
 
     // Reload sing-box
@@ -168,5 +180,68 @@ pub fn apply_staging(paths: &Paths) -> Result<()> {
         .args(["try-reload-or-restart", "sing-box"])
         .status();
 
+    Ok(())
+}
+
+/// Set immutable attribute on a file (chattr +i)
+/// This prevents deletion, renaming, or modification even by root
+pub fn protect_file(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let output = Command::new("chattr")
+        .args(["+i", path.to_str().unwrap()])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("{} Failed to set immutable on {:?}: {}", "[WARN]".yellow(), path, stderr);
+        // Non-fatal - file might be on read-only filesystem
+    } else {
+        eprintln!("{} Protected {:?} with immutable attribute", "[INFO]".green(), path);
+    }
+    Ok(())
+}
+
+/// Remove immutable attribute from a file (chattr -i)
+/// Alias for unprotect_file for semantic clarity in code
+pub fn remove_immutable(path: &Path) -> Result<()> {
+    unprotect_file(path)
+}
+
+/// Remove immutable attribute from a file (chattr -i)
+pub fn unprotect_file(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let output = Command::new("chattr")
+        .args(["-i", path.to_str().unwrap()])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("{} Failed to remove immutable from {:?}: {}", "[WARN]".yellow(), path, stderr);
+    }
+    Ok(())
+}
+
+/// Protect all important mimic-node files with immutable attribute
+pub fn protect_all(paths: &Paths) -> Result<()> {
+    eprintln!("{}", "[INFO] Protecting important files with immutable attribute...".green());
+    eprintln!("{}", "    This prevents accidental deletion or modification".dimmed());
+    eprintln!("{}", "    To modify, use 'mimictl' commands or manually: sudo chattr -i <file>".dimmed());
+
+    protect_file(&paths.config)?;
+    protect_file(&paths.pubkey)?;
+
+    Ok(())
+}
+
+/// Remove protection from all important files before modification
+pub fn unprotect_all(paths: &Paths) -> Result<()> {
+    unprotect_file(&paths.config)?;
+    unprotect_file(&paths.pubkey)?;
     Ok(())
 }

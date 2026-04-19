@@ -171,6 +171,7 @@ async fn main() -> Result<()> {
         Commands::Diff => commands::system::diff(&paths)?,
         Commands::Apply => commands::system::apply(&paths)?,
         Commands::Check => commands::system::check(&paths)?,
+        Commands::Protect { unprotect } => commands::protect::protect(&paths, unprotect)?,
         Commands::Upgrade { auto, dry_run } => {
             commands::update::upgrade(&paths, auto, dry_run)?
         }

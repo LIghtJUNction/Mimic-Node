@@ -3,7 +3,7 @@ use colored::*;
 use std::fs;
 
 use crate::paths::Paths;
-use crate::utils::{generate_keypair, load_config, save_config};
+use crate::utils::{generate_keypair, load_config, save_config, protect_all};
 
 pub fn generate(paths: &Paths) -> Result<()> {
     eprintln!("{} Generating reality keypair...", "[INFO]".green());
@@ -20,6 +20,9 @@ pub fn generate(paths: &Paths) -> Result<()> {
 
     save_config(&paths.staging, &config)?;
     fs::write(&paths.staging_pubkey, &pub_key)?;
+
+    // Protect files with immutable attribute
+    protect_all(paths)?;
 
     eprintln!(
         "{} Keypair staged. Run 'mimictl apply' to activate.",

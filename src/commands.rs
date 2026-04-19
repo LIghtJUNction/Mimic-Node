@@ -3,6 +3,7 @@ pub mod dns;
 pub mod hysteria2;
 pub mod keys;
 pub mod net;
+pub mod protect;
 pub mod setup;
 pub mod skill;
 pub mod system;
