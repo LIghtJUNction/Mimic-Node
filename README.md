@@ -241,17 +241,19 @@ sudo mimictl hysteria2 setup --port 8443 --masquerade microsoft.com
 # 添加 Hysteria2 用户
 sudo mimictl hysteria2 add-user --name alice
 
-# 生成 Hysteria2 链接
+# 生成 Hysteria2 链接（自动使用 TLS 证书中的域名）
 sudo mimictl hysteria2 link
 ```
 
+**注意**：Hysteria2 使用 UDP 协议（端口 8443），不是 TCP。客户端需要支持 UDP。
+
 #### 使用域名
 
-推荐使用域名连接 Hysteria2，这样证书验证更安全：
+推荐使用域名连接 Hysteria2，这样证书验证更安全。命令会自动从 TLS 证书中提取域名生成链接。
 
+如果链接中仍是 IP，可手动替换：
 ```bash
-# 生成链接后，手动替换 IP 为域名
-sudo mimictl hysteria2 link | sed 's/45.59.187.63/api.lightjunction.online/g'
+sudo mimictl hysteria2 link | sed 's/SERVER_IP/api.lightjunction.online/g'
 ```
 
 #### TLS 证书错误怎么办？
@@ -316,6 +318,36 @@ mimictl completions --shell bash --apply
 mimictl completions --shell zsh --apply
 mimictl completions --shell fish --apply
 ```
+
+### Gist 订阅同步
+
+将用户订阅链接上传到 GitHub Gist，支持定时自动同步。
+
+**要求**：服务器已登录 GitHub (`gh auth login`)
+
+```bash
+# 配置 Gist 同步
+# -u: 用户名 (用于获取该用户的订阅链接)
+# -r: 备注信息 (本地存储，用于 list 查看)
+# -n: 节点名前缀 (默认: mimic-node)
+# -c: Cron 定时任务 (如 "0 * * * *" 表示每小时)
+sudo mimictl gist setup -u <username> -r "My Server" -n "us-node"
+
+# 手动同步 (自动调用 mimictl link 获取订阅并上传)
+sudo mimictl gist sync
+sudo mimictl gist sync -2   # 包含 Hysteria2 链接
+
+# 撤销 Gist (删除旧 gist 并用相同配置创建新的)
+sudo mimictl gist revoke
+sudo mimictl gist revoke -g <gist-id>  # 撤销指定 Gist ID
+
+# 查看已配置的 gist 和所有 GitHub gists
+sudo mimictl gist list
+```
+
+**定时同步**：systemd timer 每小时自动执行 `mimictl gist sync` (可用 -c 自定义)
+
+**Gist 描述**：保持简洁 ("Mimic-Node")，避免信息泄露
 
 ## 架构说明
 

@@ -1,5 +1,6 @@
 pub mod diagnose;
 pub mod dns;
+pub mod gist;
 pub mod hysteria2;
 pub mod keys;
 pub mod net;

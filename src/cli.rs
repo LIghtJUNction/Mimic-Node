@@ -9,6 +9,60 @@ pub struct Cli {
 }
 
 #[derive(Subcommand)]
+pub enum GistCommands {
+    /// Configure gist sync (creates new gist if not specified, uses gh CLI which must be logged in)
+    Setup {
+        /// Gist ID (from https://gist.github.com/USER/gist-id). If not provided, creates a new gist automatically.
+        #[arg(short, long)]
+        gist_id: Option<String>,
+
+        /// Username to get subscription link from
+        #[arg(short = 'u', long = "user", required = true)]
+        username: String,
+
+        /// Remark/note for this gist (stored locally, shown in list)
+        #[arg(short = 'r', long = "remark")]
+        remark: Option<String>,
+
+        /// Custom name prefix for the node (shown in client, default: mimic-node)
+        #[arg(short = 'n', long = "name")]
+        node_name: Option<String>,
+
+        /// Conversion type (default: v2ray)
+        #[arg(short = 't', long = "type")]
+        convert_type: Option<String>,
+
+        /// Cron schedule for auto-sync (e.g., "0 * * * *" for hourly)
+        #[arg(short = 'c', long = "cron")]
+        cron: Option<String>,
+    },
+
+    /// Sync user's subscription to gist (calls mimictl link and uploads)
+    Sync {
+        /// Include Hysteria2 links in subscription
+        #[arg(short = '2', long = "hy2")]
+        include_hy2: bool,
+    },
+
+    /// Revoke/delete the gist and remove local config
+    Revoke {
+        /// Gist ID to revoke (if not provided, uses config file)
+        #[arg(short, long)]
+        gist_id: Option<String>,
+    },
+
+    /// List configured gist and all GitHub gists
+    List,
+
+    /// Delete the gist and remove local config (unlike revoke, this does NOT create a new gist)
+    Rm {
+        /// Gist ID to delete (if not provided, uses config file)
+        #[arg(short, long)]
+        gist_id: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum Hysteria2Commands {
     /// Setup Hysteria2 inbound with given port and optional parameters
     Setup {
@@ -419,6 +473,12 @@ pub enum Commands {
     Skill {
         #[command(subcommand)]
         command: SkillCommands,
+    },
+
+    /// Sync config to GitHub Gist
+    Gist {
+        #[command(subcommand)]
+        command: GistCommands,
     },
 }
 

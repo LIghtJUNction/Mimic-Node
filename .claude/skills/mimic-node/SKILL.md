@@ -21,16 +21,24 @@ When the user says:
 3. **DO** run each command and show the user the results
 4. **DO** explain what you did
 
+**⚠️ IMPORTANT - Do NOT use `mimictl setup`:**
+- `mimictl setup` is an **interactive wizard for humans** - do NOT run it
+- Use individual `mimictl` commands directly instead
+
+**⚠️ CRITICAL - Never use `chattr -i`:**
+- NEVER run `chattr -i /etc/sing-box/config.json` to unlock config file
+- ALWAYS modify the **staging** config file, then use `mimictl apply`
+- The staging file is at `/etc/sing-box/config.new`
+- Unlock and apply: `sudo mimictl discard --item config --force` (removes staging, then rerun your command)
+
 **Example workflow for "帮我部署 Mimic-Node":**
 ```bash
 # Execute these commands automatically:
-paru -S mimic-node-git
-sudo systemctl enable --now mimic-node-mount.service
-sudo mimictl gen-keys
-sudo mimictl add my@email.com --level 1
-sudo mimictl verify
-sudo mimictl apply
-sudo systemctl enable --now sing-box
+ssh ArchDmit "sudo systemctl enable --now mimic-node-mount.service"
+ssh ArchDmit "sudo mimictl gen-keys"
+ssh ArchDmit "sudo mimictl add my@email.com"
+ssh ArchDmit "sudo mimictl apply"
+ssh ArchDmit "sudo systemctl enable --now sing-box"
 ```
 
 ## Overview
@@ -238,17 +246,19 @@ sudo mimictl hysteria2 setup --port 8443 --masquerade microsoft.com
 # Add Hysteria2 user
 sudo mimictl hysteria2 add-user --name alice
 
-# Generate Hysteria2 link
+# Generate Hysteria2 link (auto-detects domain from TLS cert)
 sudo mimictl hysteria2 link
 ```
 
+**Note**: Hysteria2 uses UDP (port 8443), not TCP. Clients must support UDP.
+
 #### Using Domain Names
 
-Using a domain name for Hysteria2 is recommended for secure TLS certificate validation:
+Using a domain name for Hysteria2 is recommended for secure TLS certificate validation. The command auto-detects domain from TLS certificate.
 
+If link still shows IP, replace manually:
 ```bash
-# Generate link and replace IP with domain
-sudo mimictl hysteria2 link | sed 's/45.59.187.63/api.lightjunction.online/g'
+sudo mimictl hysteria2 link | sed 's/SERVER_IP/api.lightjunction.online/g'
 ```
 
 #### TLS Certificate Errors?
@@ -279,6 +289,37 @@ mimictl completions --shell bash --apply
 mimictl completions --shell zsh --apply
 mimictl completions --shell fish --apply
 ```
+
+## Gist Subscription Sync
+
+Upload user subscription links to GitHub Gist, with automatic hourly sync.
+
+**Requirement**: Server must be logged into GitHub (`gh auth login`)
+
+```bash
+# Configure Gist sync
+# -g: Gist ID (from https://gist.github.com/USER/gist-id)
+# -u: Username (used to get that user's subscription link via mimictl link)
+# -r: Remark/note for this gist (stored locally, shown in list)
+# -n: Node name prefix (default: mimic-node)
+# -c: Cron schedule for auto-sync (e.g., "0 * * * *" for hourly)
+sudo mimictl gist setup -u <username> -r "My Server" -n "us-node"
+
+# Manual sync (automatically calls mimictl link, converts, and uploads)
+sudo mimictl gist sync
+sudo mimictl gist sync -2   # Include Hysteria2 links
+
+# Revoke Gist (deletes old gist and creates new one with same config)
+sudo mimictl gist revoke
+sudo mimictl gist revoke -g <gist-id>  # Revoke specific Gist ID
+
+# List configured gist and all GitHub gists
+sudo mimictl gist list
+```
+
+**Auto-sync**: systemd timer is enabled, runs `mimictl gist sync` every hour (configurable via -c cron)
+
+**Gist descriptions** are kept minimal ("Mimic-Node") to avoid information leakage
 
 ## Supported Protocols
 

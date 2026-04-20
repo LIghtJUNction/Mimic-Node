@@ -6,7 +6,7 @@ mod utils;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Commands, DnsCommands, Hysteria2Commands, SkillCommands};
+use cli::{Cli, Commands, DnsCommands, GistCommands, Hysteria2Commands, SkillCommands};
 use paths::Paths;
 
 #[tokio::main]
@@ -194,6 +194,15 @@ async fn main() -> Result<()> {
             }
             SkillCommands::Uninstall { project } => commands::skill::uninstall(project)?,
             SkillCommands::Status => commands::skill::status()?,
+        },
+        Commands::Gist { command } => match command {
+            GistCommands::Setup { gist_id, username, remark, node_name, convert_type, cron } => {
+                commands::gist::setup(gist_id.as_deref(), &username, remark.as_deref(), node_name.as_deref(), convert_type.as_deref(), cron.as_deref())?
+            }
+            GistCommands::Sync { include_hy2 } => commands::gist::sync(include_hy2)?,
+            GistCommands::Revoke { gist_id } => commands::gist::revoke(gist_id.as_deref())?,
+            GistCommands::List => commands::gist::list()?,
+            GistCommands::Rm { gist_id } => commands::gist::rm(gist_id.as_deref())?,
         },
     }
 
