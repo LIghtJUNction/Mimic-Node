@@ -67,7 +67,7 @@ pub fn setup(gist_id: Option<&str>, username: &str, remark: Option<&str>, node_n
         let created_gist_id = output_str
             .trim()
             .split('/')
-            .last()
+            .next_back()
             .unwrap_or_default()
             .to_string();
 
@@ -93,7 +93,7 @@ pub fn setup(gist_id: Option<&str>, username: &str, remark: Option<&str>, node_n
     if let Some(ref r) = config.remark {
         println!("Remark: {}", r);
     }
-    let display_name = config.node_name.as_ref().map(|s| s.as_str()).unwrap_or("mimic-node");
+    let display_name = config.node_name.as_deref().unwrap_or("mimic-node");
     println!("Node name prefix: {}", display_name);
     let ct = convert_type.unwrap_or("v2ray");
     println!("Convert type: {}", ct);
@@ -143,7 +143,7 @@ pub fn revoke(gist_id: Option<&str>) -> Result<()> {
     let new_gist_id = output_str
         .trim()
         .split('/')
-        .last()
+        .next_back()
         .unwrap_or_default()
         .to_string();
 
@@ -360,7 +360,7 @@ pub fn sync(include_hy2: bool) -> Result<()> {
         }
     });
     let json_file = format!("{}.json", temp_file);
-    std::fs::write(&json_file, &json_input.to_string())
+    std::fs::write(&json_file, json_input.to_string())
         .context("Failed to write json input file")?;
 
     // Use gh api with --input to read JSON from file
@@ -388,7 +388,7 @@ pub fn sync(include_hy2: bool) -> Result<()> {
         }
 
         let output_str = String::from_utf8_lossy(&output.stdout);
-        let new_gist_id = output_str.trim().split('/').last().unwrap_or_default().to_string();
+        let new_gist_id = output_str.trim().split('/').next_back().unwrap_or_default().to_string();
 
         let config = GistConfig {
             gist_id: new_gist_id.clone(),

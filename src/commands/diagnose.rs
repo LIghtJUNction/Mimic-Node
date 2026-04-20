@@ -146,11 +146,10 @@ fn check_config_exists(paths: &Paths, verbose: bool) -> bool {
     let default_exists = paths.default_config.exists();
 
     if config_exists && default_exists {
-        if verbose {
-            if let Some(p) = paths.get_input_config_path().to_str() {
+        if verbose
+            && let Some(p) = paths.get_input_config_path().to_str() {
                 println!("      {} Config: {}", "[*]".cyan(), p);
             }
-        }
         true
     } else {
         if verbose {
@@ -816,10 +815,10 @@ fn check_deprecated_18(config: &serde_json::Value, verbose: bool) -> Vec<String>
 fn check_hysteria2(paths: &Paths, verbose: bool) -> bool {
     print!("  Checking Hysteria2 configuration... ");
 
-    if let Ok(config_str) = fs::read_to_string(paths.get_input_config_path()) {
-        if let Ok(config) = serde_json::from_str::<serde_json::Value>(&config_str) {
-            if let Some(inbounds) = config.get("inbounds").and_then(|i| i.as_array()) {
-                if let Some(hy2) = inbounds.iter().find(|i| {
+    if let Ok(config_str) = fs::read_to_string(paths.get_input_config_path())
+        && let Ok(config) = serde_json::from_str::<serde_json::Value>(&config_str)
+            && let Some(inbounds) = config.get("inbounds").and_then(|i| i.as_array())
+                && let Some(hy2) = inbounds.iter().find(|i| {
                     i.get("type") == Some(&serde_json::Value::String("hysteria2".to_string()))
                 }) {
                     let port = hy2.get("listen_port").and_then(|p| p.as_u64()).unwrap_or(8443);
@@ -842,9 +841,6 @@ fn check_hysteria2(paths: &Paths, verbose: bool) -> bool {
                     }
                     return true;
                 }
-            }
-        }
-    }
     println!("{}", "[INFO]".cyan());
     if verbose {
         println!("      {} No Hysteria2 inbound configured", "[*]".cyan());

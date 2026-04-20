@@ -227,13 +227,13 @@ fn collect_diffs(path: &str, old_val: &serde_json::Value, new_val: &serde_json::
                 collect_diffs(&new_path, &old_arr[i], &new_arr[i], diffs);
             }
             // Handle length differences
-            for i in min_len..new_arr.len() {
+            for (i, item) in new_arr.iter().enumerate().skip(min_len) {
                 let new_path = format!("{}[{}]", path_string, i);
-                diffs.push(DiffEntry::Added { path: new_path, value: new_arr[i].clone() as serde_json::Value });
+                diffs.push(DiffEntry::Added { path: new_path, value: item.clone() });
             }
-            for i in min_len..old_arr.len() {
+            for (i, item) in old_arr.iter().enumerate().skip(min_len) {
                 let new_path = format!("{}[{}]", path_string, i);
-                diffs.push(DiffEntry::Removed { path: new_path, value: old_arr[i].clone() as serde_json::Value });
+                diffs.push(DiffEntry::Removed { path: new_path, value: item.clone() });
             }
         }
         _ => {
@@ -443,7 +443,7 @@ pub fn diff(paths: &Paths) -> Result<()> {
                 }
                 "a" | "all" => {
                     // Apply all remaining diffs without asking
-                    for d in diffs[i..].to_vec() {
+                    for d in diffs[i..].iter().cloned() {
                         to_apply.push(d);
                     }
                     eprintln!("{} Applying all remaining changes...", "[INFO]".green());

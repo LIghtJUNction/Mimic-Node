@@ -298,11 +298,10 @@ pub fn link(paths: &Paths, name: Option<String>) -> Result<()> {
                 .and_then(|s| s.as_str())
             {
                 // Path like /etc/letsencrypt/live/api.example.com/fullchain.pem
-                if let Some(domain) = cert_path.split('/').nth(3) {
-                    if domain.contains('.') && domain != "live" {
+                if let Some(domain) = cert_path.split('/').nth(3)
+                    && domain.contains('.') && domain != "live" {
                         return domain.to_string();
                     }
-                }
             }
         }
 
@@ -310,14 +309,12 @@ pub fn link(paths: &Paths, name: Option<String>) -> Result<()> {
         if let Ok(resp) = std::process::Command::new("curl")
             .args(["-s", "-4", "ifconfig.me"])
             .output()
-        {
-            if let Ok(ip) = String::from_utf8(resp.stdout) {
+            && let Ok(ip) = String::from_utf8(resp.stdout) {
                 let ip = ip.trim();
                 if !ip.is_empty() && ip.contains('.') {
                     return ip.to_string();
                 }
             }
-        }
         "YOUR_SERVER_IP".to_string()
     }
     let config_str = std::fs::read_to_string(input_path)?;
@@ -391,18 +388,16 @@ pub fn link(paths: &Paths, name: Option<String>) -> Result<()> {
                 password, server_addr, port, password, alpn
             );
         }
+    } else if let (Some(up), Some(down)) = (up_mbps, down_mbps) {
+        println!(
+            "hysteria2://{}@{}:{}?up={}&down={}&alpn={}#hy2",
+            password, server_addr, port, up, down, alpn
+        );
     } else {
-        if let (Some(up), Some(down)) = (up_mbps, down_mbps) {
-            println!(
-                "hysteria2://{}@{}:{}?up={}&down={}&alpn={}#hy2",
-                password, server_addr, port, up, down, alpn
-            );
-        } else {
-            println!(
-                "hysteria2://{}@{}:{}?alpn={}#hy2",
-                password, server_addr, port, alpn
-            );
-        }
+        println!(
+            "hysteria2://{}@{}:{}?alpn={}#hy2",
+            password, server_addr, port, alpn
+        );
     }
 
     Ok(())

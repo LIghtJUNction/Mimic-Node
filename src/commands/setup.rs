@@ -49,7 +49,7 @@ pub fn interactive(paths: &Paths) -> Result<()> {
                 }
             }
             4 => {
-                generateRealityKeys(paths)?;
+                generate_reality_keys(paths)?;
             }
             5 => {
                 println!("\n{}", "  Goodbye!".green());
@@ -161,7 +161,7 @@ fn run_setup_wizard(_paths: &Paths) -> Result<()> {
                 .parse()
                 .unwrap_or(0);
             users.push((email.clone(), level));
-            println!("{}", format!("  {} Added: {} (level: {})", "[OK]".green(), email, level));
+            println!("  {} Added: {} (level: {})", "[OK]".green(), email, level);
         }
     }
 
@@ -374,7 +374,7 @@ fn run_setup_wizard(_paths: &Paths) -> Result<()> {
         let config_str = serde_json::to_string_pretty(&config)?;
         std::fs::write(&config_path, &config_str)?;
 
-        println!("\n{}", format!("  {} Configuration created at: {}", "[OK]".green(), config_path.display()));
+        println!("  {} Configuration created at: {}", "[OK]".green(), config_path.display());
         println!("\n{}", "  Next steps:".cyan().bold());
         println!("  {} 1. Review: mimictl show", "[>]".dimmed());
         println!("  {} 2. Apply: mimictl apply", "[>]".dimmed());
@@ -488,10 +488,10 @@ fn add_new_user(_paths: &Paths) -> Result<()> {
         .output()?;
 
     if output.status.success() {
-        println!("\n{}", format!("  {} User '{}' added successfully!", "[OK]".green(), email));
+        println!("  {} User '{}' added successfully!", "[OK]".green(), email);
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        println!("\n{}", format!("  {} Error: {}", "[ERROR]".red(), stderr));
+        println!("  {} Error: {}", "[ERROR]".red(), stderr);
     }
 
     prompt_enter()?;
@@ -518,10 +518,10 @@ fn remove_user(_paths: &Paths) -> Result<()> {
         .output()?;
 
     if output.status.success() {
-        println!("\n{}", format!("  {} User(s) removed", "[OK]".green()));
+        println!("  {} User(s) removed", "[OK]".green());
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        println!("\n{}", format!("  {} Error: {}", "[ERROR]".red(), stderr));
+        println!("  {} Error: {}", "[ERROR]".red(), stderr);
     }
 
     prompt_enter()?;
@@ -548,10 +548,10 @@ fn reset_user(_paths: &Paths) -> Result<()> {
         .output()?;
 
     if output.status.success() {
-        println!("\n{}", format!("  {} User(s) reset", "[OK]".green()));
+        println!("  {} User(s) reset", "[OK]".green());
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        println!("\n{}", format!("  {} Error: {}", "[ERROR]".red(), stderr));
+        println!("  {} Error: {}", "[ERROR]".red(), stderr);
     }
 
     prompt_enter()?;
@@ -575,7 +575,7 @@ fn view_current_config(paths: &Paths) -> Result<()> {
     Ok(())
 }
 
-fn generateRealityKeys(_paths: &Paths) -> Result<()> {
+fn generate_reality_keys(_paths: &Paths) -> Result<()> {
     clear_screen();
     println!(r#"
 ╭─────────────────────────────────────────────────╮
@@ -593,7 +593,7 @@ fn generateRealityKeys(_paths: &Paths) -> Result<()> {
         println!("\n{}", "  Keys generated and staged! Run 'mimictl apply' to activate.".green());
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        println!("\n{}", format!("  {} Error: {}", "[ERROR]".red(), stderr));
+        eprintln!("  {} Error: {}", "[ERROR]".red(), stderr);
     }
 
     prompt_enter()?;
