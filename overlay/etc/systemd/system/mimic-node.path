@@ -1,10 +1,12 @@
 [Unit]
 Description=Watch for Mimic-Node Staging Configuration Changes
+Requires=mimic-node-mount.service
+After=mimic-node-mount.service
 
 [Path]
-# Watch for changes to the staging config file.
-# When mimictl creates/updates this file (e.g. via batch add),
-PathChanged=/etc/sing-box/config.json
+# Apply only after the staging writer closes the file. A failed validation
+# leaves it staged without repeatedly activating the service.
+PathChanged=/etc/sing-box/config.new
 Unit=mimic-node-deploy.service
 
 [Install]

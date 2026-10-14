@@ -1,13 +1,10 @@
 [Unit]
-Description=Deploy Mimic-Node
-ConditionPathExists=/etc/sing-box/config.json
+Description=Validate and Apply Staged Mimic-Node Configuration
+ConditionPathExists=/etc/sing-box/config.new
 Requires=mimic-node-mount.service
 After=mimic-node-mount.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/mimictl check
-# systemctl edit mimic-node-deploy.service !
-
-[Install]
-WantedBy=multi-user.target
+UMask=0077
+ExecStart=/usr/bin/mimictl apply

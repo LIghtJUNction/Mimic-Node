@@ -37,13 +37,39 @@ pub fn verify(
         return verify_link(&link_str, &config, verbose);
     }
 
+    let sing_box = std::env::var("SING_BOX_BIN").unwrap_or_else(|_| "sing-box".to_owned());
+    let check = std::process::Command::new(sing_box)
+        .arg("check")
+        .arg("-c")
+        .arg(&config_path)
+        .output()
+        .context("Cannot run sing-box check")?;
+    if !check.status.success() {
+        return Err(anyhow!(
+            "sing-box rejected configuration: {}",
+            String::from_utf8_lossy(&check.stderr)
+        ));
+    }
+
+    let has_reality_vless = config.inbounds.iter().any(|inbound| {
+        inbound.protocol_type == "vless"
+            && inbound.tls.as_ref().is_some_and(|tls| {
+                tls.enabled && tls.reality.as_ref().is_some_and(|reality| reality.enabled)
+            })
+    });
+    if !has_reality_vless {
+        eprintln!("{} sing-box configuration check passed.", "[INFO]".green());
+        return Ok(());
+    }
+
     eprintln!("{} Verifying configuration integrity...", "[INFO]".green());
 
     let mut errors = 0;
     let mut warnings = 0;
 
     // 1. Verify Inbounds Structure
-    let inbound = match config.inbounds.first() {
+    let inbound_index = crate::commands::user::managed_vless_inbound_index(&config)?;
+    let inbound = match config.inbounds.get(inbound_index) {
         Some(i) => i,
         None => {
             eprintln!("{} No inbounds defined in config.", "[ERROR]".red());
@@ -137,8 +163,13 @@ pub fn verify(
                 // Only compare with stored PUBKEY file if we are checking the system/staged config
                 if is_system_config {
                     // Read stored PUBKEY
-                    let stored_pubkey = if paths.pubkey.exists() {
-                        std::fs::read_to_string(&paths.pubkey)
+                    let pubkey_path = if paths.staging.exists() && paths.staging_pubkey.exists() {
+                        &paths.staging_pubkey
+                    } else {
+                        &paths.pubkey
+                    };
+                    let stored_pubkey = if pubkey_path.exists() {
+                        std::fs::read_to_string(pubkey_path)
                             .unwrap_or_default()
                             .trim()
                             .to_string()
@@ -341,10 +372,7 @@ fn verify_link(link: &str, config: &SingBoxConfig, verbose: bool) -> Result<()> 
         ));
     }
 
-    let inbound = config
-        .inbounds
-        .first()
-        .ok_or_else(|| anyhow!("Config has no inbounds"))?;
+    let inbound = &config.inbounds[crate::commands::user::managed_vless_inbound_index(config)?];
 
     let tls = inbound
         .tls

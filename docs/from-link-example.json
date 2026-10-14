@@ -28,15 +28,11 @@
       "tag": "direct"
     },
     {
-      "type": "block",
-      "tag": "block"
-    },
-    {
       "type": "vless",
       "tag": "one",
       "server": "1.2.3.4",
       "server_port": 443,
-      "uuid": "a",
+      "uuid": "11111111-2222-4333-8444-000000000001",
       "flow": "xtls-rprx-vision",
       "tls": {
         "enabled": true,
@@ -47,8 +43,8 @@
         },
         "reality": {
           "enabled": true,
-          "public_key": "PBK1",
-          "short_id": "S1"
+          "public_key": "wq4jSwKY8CByORLZiR1OXJ_aJNF9qc-gBVtobYT27lo",
+          "short_id": "0123456789abcdef"
         }
       },
       "packet_encoding": "xudp"
@@ -58,7 +54,7 @@
       "tag": "two",
       "server": "2.2.2.2",
       "server_port": 443,
-      "uuid": "b",
+      "uuid": "11111111-2222-4333-8444-000000000002",
       "flow": "xtls-rprx-vision",
       "tls": {
         "enabled": true,
@@ -69,8 +65,8 @@
         },
         "reality": {
           "enabled": true,
-          "public_key": "PBK2",
-          "short_id": "S2"
+          "public_key": "wq4jSwKY8CByORLZiR1OXJ_aJNF9qc-gBVtobYT27lo",
+          "short_id": "0123456789abcdef"
         }
       },
       "packet_encoding": "xudp"
@@ -85,6 +81,17 @@
     }
   ],
   "route": {
-    "final": "proxy"
+    "final": "proxy",
+    "default_domain_resolver": "dns",
+    "auto_detect_interface": true,
+    "rules": [
+      {
+        "action": "sniff"
+      },
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      }
+    ]
   }
 }

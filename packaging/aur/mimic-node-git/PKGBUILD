@@ -1,0 +1,70 @@
+# shellcheck shell=bash disable=SC2034,SC2154
+# Maintainer: LightJunction <lightjunction.me@gmail.com>
+pkgname=mimic-node-git
+pkgver=r115.5503921
+pkgrel=1
+pkgdesc='An OverlayFS-based sing-box Reality node manager (development version)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/LIghtJUNction/Mimic-Node'
+license=('GPL-3.0-or-later')
+depends=('bash' 'glibc' 'gcc-libs' 'openssl' 'ca-certificates' 'sing-box>=1.14'
+         'systemd' 'util-linux' 'kmod' 'e2fsprogs' 'iproute2' 'coreutils')
+makedepends=('cargo' 'git' 'python')
+optdepends=('certbot: provision TLS certificates separately for Hysteria2'
+            'github-cli: GitHub Gist subscriptions'
+            'curl: public address discovery fallback'
+            'iptables: firewall diagnostics')
+provides=('mimic-node' 'mimictl')
+conflicts=('mimic-node')
+install=mimic-node.install
+source=('Mimic-Node::git+https://github.com/LIghtJUNction/Mimic-Node.git#branch=main')
+sha256sums=('SKIP')
+
+pkgver() {
+    cd Mimic-Node || return 1
+    printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+_cargo_env() {
+    export RUSTUP_TOOLCHAIN=stable
+    export CARGO_HOME="$srcdir/cargo-home"
+    export CARGO_TARGET_DIR=target
+}
+
+prepare() {
+    cd Mimic-Node || return 1
+    _cargo_env
+    cargo fetch --locked --target "$(rustc -vV | sed -n 's/^host: //p')"
+}
+
+build() {
+    cd Mimic-Node || return 1
+    _cargo_env
+    cargo build --release --all-features --frozen
+}
+
+check() {
+    cd Mimic-Node || return 1
+    _cargo_env
+    cargo test --all-features --frozen
+    python -B -m unittest discover -s tests -p 'test_packaging.py' -v
+}
+
+package() {
+    cd Mimic-Node || return 1
+    install -Dm755 target/release/mimictl "$pkgdir/usr/bin/mimictl"
+    install -Dm755 overlay/usr/bin/mimic-mount "$pkgdir/usr/bin/mimic-mount"
+    install -Dm644 overlay/usr/share/mimic-node/default/config.json \
+        "$pkgdir/usr/share/mimic-node/default/config.json"
+    install -Dm644 overlay/usr/share/mimic-node/sni.txt "$pkgdir/usr/share/mimic-node/sni.txt"
+    local unit
+    for unit in overlay/etc/systemd/system/mimic-node.* \
+        overlay/etc/systemd/system/mimic-node-{mount,deploy}.service; do
+        install -Dm644 "$unit" "$pkgdir/usr/lib/systemd/system/${unit##*/}"
+    done
+    install -Dm644 overlay/etc/systemd/system/sing-box.service.d/mimic-overlay.conf \
+        "$pkgdir/usr/lib/systemd/system/sing-box.service.d/mimic-overlay.conf"
+    install -dm700 "$pkgdir/var/lib/mimic-node"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

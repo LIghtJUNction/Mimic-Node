@@ -1,0 +1,35 @@
+pkgbase = mimic-node-git
+	pkgdesc = An OverlayFS-based sing-box Reality node manager (development version)
+	pkgver = r115.5503921
+	pkgrel = 1
+	url = https://github.com/LIghtJUNction/Mimic-Node
+	install = mimic-node.install
+	arch = x86_64
+	arch = aarch64
+	license = GPL-3.0-or-later
+	makedepends = cargo
+	makedepends = git
+	makedepends = python
+	depends = bash
+	depends = glibc
+	depends = gcc-libs
+	depends = openssl
+	depends = ca-certificates
+	depends = sing-box>=1.14
+	depends = systemd
+	depends = util-linux
+	depends = kmod
+	depends = e2fsprogs
+	depends = iproute2
+	depends = coreutils
+	optdepends = certbot: provision TLS certificates separately for Hysteria2
+	optdepends = github-cli: GitHub Gist subscriptions
+	optdepends = curl: public address discovery fallback
+	optdepends = iptables: firewall diagnostics
+	provides = mimic-node
+	provides = mimictl
+	conflicts = mimic-node
+	source = Mimic-Node::git+https://github.com/LIghtJUNction/Mimic-Node.git#branch=main
+	sha256sums = SKIP
+
+pkgname = mimic-node-git

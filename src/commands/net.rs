@@ -62,20 +62,21 @@ const KNOWN_GOOD_DOMAINS: &[(&str, &str)] = &[
 
 // Detect server region by querying IP geolocation
 fn detect_server_region() -> String {
-    // Use curl to call ipapi.co since we're already using Command for openssl
-    let output = Command::new("sh")
+    let output = Command::new("curl")
         .args([
-            "-c",
-            "curl -s 'https://ipapi.co/json/' 2>/dev/null | grep country_code | head -1 | awk -F'\"' '{print $4}'",
+            "--fail",
+            "--silent",
+            "--max-time",
+            "5",
+            "https://ipapi.co/json/",
         ])
         .output();
-
-    let country = match output {
-        Ok(o) if o.status.success() => {
-            String::from_utf8_lossy(&o.stdout).trim().to_string()
-        }
-        _ => String::new(),
-    };
+    let country = output
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok())
+        .and_then(|json| json["country_code"].as_str().map(str::to_owned))
+        .unwrap_or_default();
 
     if country.is_empty() {
         return "unknown".to_string();
@@ -83,9 +84,13 @@ fn detect_server_region() -> String {
 
     // Map country to region
     let region = match country.as_str() {
-        "US" | "CA" | "MX" | "PR" | "CR" | "PA" | "GT" | "HN" | "NI" | "SV" | "BZ" | "BS" | "CU" | "JM" | "HT" | "DO" | "TT" => "us",
-        "GB" | "DE" | "FR" | "NL" | "SE" | "NO" | "DK" | "FI" | "PL" | "IT" | "ES" | "PT" | "BE" | "AT" | "CH" | "IE" | "CZ" | "HU" | "RO" | "BG" | "GR" | "SK" | "LT" | "LV" | "EE" => "eu",
-        "JP" | "KR" | "SG" | "HK" | "TW" | "AU" | "NZ" | "IN" | "TH" | "VN" | "MY" | "PH" | "ID" | "PK" | "BD" | "LK" | "NP" | "MM" | "KH" | "LA" | "BN" | "TL" => "ap",
+        "US" | "CA" | "MX" | "PR" | "CR" | "PA" | "GT" | "HN" | "NI" | "SV" | "BZ" | "BS"
+        | "CU" | "JM" | "HT" | "DO" | "TT" => "us",
+        "GB" | "DE" | "FR" | "NL" | "SE" | "NO" | "DK" | "FI" | "PL" | "IT" | "ES" | "PT"
+        | "BE" | "AT" | "CH" | "IE" | "CZ" | "HU" | "RO" | "BG" | "GR" | "SK" | "LT" | "LV"
+        | "EE" => "eu",
+        "JP" | "KR" | "SG" | "HK" | "TW" | "AU" | "NZ" | "IN" | "TH" | "VN" | "MY" | "PH"
+        | "ID" | "PK" | "BD" | "LK" | "NP" | "MM" | "KH" | "LA" | "BN" | "TL" => "ap",
         "CN" => "cn",
         _ => "unknown",
     };
@@ -118,7 +123,11 @@ pub async fn sni(
         // Detect server region first
         eprintln!("{} Detecting server region...", "[INFO]".green());
         let region_str = detect_server_region();
-        eprintln!("{} Server region: {}", "[INFO]".green(), region_str.to_uppercase());
+        eprintln!(
+            "{} Server region: {}",
+            "[INFO]".green(),
+            region_str.to_uppercase()
+        );
 
         eprintln!(
             "{} Auto-detecting best SNI from {:?}...",
@@ -145,9 +154,10 @@ pub async fn sni(
         // First: known good domains matching server region or global
         for (domain, region) in KNOWN_GOOD_DOMAINS {
             if (*region == region_str || *region == "global")
-                && candidates.contains(&domain.to_string()) {
-                    prioritized_candidates.push(domain.to_string());
-                }
+                && candidates.contains(&domain.to_string())
+            {
+                prioritized_candidates.push(domain.to_string());
+            }
         }
 
         // Then: all other candidates not already added
@@ -169,7 +179,12 @@ pub async fn sni(
         for cand in prioritized_candidates {
             count += 1;
             if count % 5 == 0 || count == 1 {
-                eprint!("\r  Testing: {}/{} | Compatible found: {}  ", count, total, found_perfect.is_some());
+                eprint!(
+                    "\r  Testing: {}/{} | Compatible found: {}  ",
+                    count,
+                    total,
+                    found_perfect.is_some()
+                );
             }
 
             let url = format!("https://{}", cand);
@@ -181,22 +196,34 @@ pub async fn sni(
             }
 
             // 2. Reality check using openssl (check TLS 1.3 + ALPN for HTTP/2)
-            let openssl_check = Command::new("sh")
+            let openssl_check = Command::new("timeout")
                 .args([
-                    "-c",
-                    &format!(
-                        "echo | openssl s_client -connect {}:443 -alpn h2 -tls1_3 2>&1 | grep -i 'ALPN protocol: h2'",
-                        cand
-                    ),
+                    "5s",
+                    "openssl",
+                    "s_client",
+                    "-connect",
+                    &format!("{}:443", cand),
+                    "-servername",
+                    &cand,
+                    "-alpn",
+                    "h2",
+                    "-tls1_3",
                 ])
+                .stdin(std::process::Stdio::null())
                 .output();
-
-            if let Ok(output) = openssl_check
-                && output.status.success()
-            {
+            if let Ok(output) = openssl_check {
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                if stdout.to_lowercase().contains("alpn protocol: h2") {
-                    eprintln!("\r{} Found perfect match: {} (region: {})", "[INFO]".green(), cand, region_str.to_uppercase());
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if output.status.success()
+                    && (stdout.contains("ALPN protocol: h2")
+                        || stderr.contains("ALPN protocol: h2"))
+                {
+                    eprintln!(
+                        "\r{} Found compatible target: {} (region: {})",
+                        "[INFO]".green(),
+                        cand,
+                        region_str.to_uppercase()
+                    );
                     found_perfect = Some(cand);
                     break;
                 }
@@ -214,11 +241,17 @@ pub async fn sni(
         }
     }
 
+    if sni_to_set.is_empty() || sni_to_set.contains(['/', ':', ' ', '\\']) {
+        return Err(anyhow!(
+            "SNI must be a domain without a URL scheme, port, or path"
+        ));
+    }
     // Apply
     let input_path = paths.get_input_config_path();
     let mut config = load_config(input_path)?;
 
-    if let Some(inbound) = config.inbounds.first_mut()
+    let index = crate::commands::user::managed_vless_inbound_index(&config)?;
+    if let Some(inbound) = config.inbounds.get_mut(index)
         && let Some(tls) = inbound.tls.as_mut()
     {
         tls.server_name = sni_to_set.clone();
@@ -320,6 +353,8 @@ where
     out
 }
 
+// Keep arguments aligned with the public CLI flags.
+#[allow(clippy::too_many_arguments)]
 pub async fn link(
     paths: &Paths,
     email: String,
@@ -339,10 +374,7 @@ pub async fn link(
     // We first ensure an inbound exists, then perform matching. If multiple users match,
     // we return a helpful, unambiguous error that lists candidates (so the user can choose
     // a UUID or a more precise pattern).
-    let inbound = config
-        .inbounds
-        .first()
-        .ok_or_else(|| anyhow!("No inbound configuration present."))?;
+    let inbound = &config.inbounds[crate::commands::user::managed_vless_inbound_index(&config)?];
 
     let indices = crate::commands::user::find_matching_indices(&inbound.users, &email)?;
     if indices.is_empty() {
@@ -351,7 +383,13 @@ pub async fn link(
     if indices.len() > 1 {
         let candidates: Vec<String> = indices
             .iter()
-            .map(|&i| inbound.users[i].get("name").and_then(|v| v.as_str()).unwrap_or("").to_string())
+            .map(|&i| {
+                inbound.users[i]
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            })
             .collect();
         return Err(anyhow!(
             "Ambiguous target '{}': matched multiple users: {}. Please specify a UUID or a more specific pattern.",
@@ -363,10 +401,24 @@ pub async fn link(
     // Single match -> proceed
     let user = &inbound.users[indices[0]];
     let user_name = user.get("name").and_then(|v| v.as_str()).unwrap_or("");
-    let user_uuid = user.get("uuid").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let user_flow = user.get("flow").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let user_uuid = user
+        .get("uuid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let user_flow = user
+        .get("flow")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let parts: Vec<&str> = user_name.split(':').collect();
-    let sid = parts.get(parts.len() - 2).unwrap_or(&"").to_string();
+    let sid = parts
+        .len()
+        .checked_sub(2)
+        .and_then(|index| parts.get(index))
+        .filter(|sid| !sid.is_empty())
+        .ok_or_else(|| anyhow!("User name must contain a Reality short ID (name:sid:level)"))?
+        .to_string();
 
     let port = inbound.listen_port;
     let sni = inbound
@@ -375,8 +427,13 @@ pub async fn link(
         .map(|t| t.server_name.clone())
         .unwrap_or_default();
 
-    let pbk = if paths.pubkey.exists() {
-        fs::read_to_string(&paths.pubkey)?.trim().to_string()
+    let pubkey_path = if paths.staging.exists() && paths.staging_pubkey.exists() {
+        &paths.staging_pubkey
+    } else {
+        &paths.pubkey
+    };
+    let pbk = if pubkey_path.exists() {
+        fs::read_to_string(pubkey_path)?.trim().to_string()
     } else {
         return Err(anyhow!("PUBKEY file not found."));
     };
@@ -405,7 +462,7 @@ pub async fn link(
 
                 // If user wants IPv6 and specified a number, collect up to `num` IPv6 addresses from this interface.
                 if detect_v6 {
-                    let v6_candidates = collect_ipv6_candidates(iface_ips.clone().into_iter(), num);
+                    let v6_candidates = collect_ipv6_candidates(iface_ips.clone(), num);
                     if !v6_candidates.is_empty() {
                         for v in v6_candidates {
                             addresses.push(v.to_string());
@@ -426,7 +483,7 @@ pub async fn link(
                         addresses.push(v4.to_string());
                     } else {
                         // fallback: choose IPv6 candidates if no IPv4 found
-                        let v6_candidate = choose_ipv6_candidate(iface_ips.into_iter());
+                        let v6_candidate = choose_ipv6_candidate(iface_ips);
                         if let Some(v6) = v6_candidate {
                             addresses.push(v6.to_string());
                         }
@@ -493,14 +550,15 @@ pub async fn link(
                         let mut found_prefix: Option<(std::net::Ipv6Addr, usize)> = None;
                         for line in stdout.lines() {
                             for token in line.split_whitespace() {
-                                if token.contains(':') && token.contains('/')
+                                if token.contains(':')
+                                    && token.contains('/')
                                     && let Some((addr_str, plen_str)) = token.split_once('/')
-                                        && let Ok(plen) = plen_str.parse::<usize>()
-                                            && let Ok(ipv6) = addr_str.parse::<std::net::Ipv6Addr>()
-                                            {
-                                                found_prefix = Some((ipv6, plen));
-                                                break;
-                                            }
+                                    && let Ok(plen) = plen_str.parse::<usize>()
+                                    && let Ok(ipv6) = addr_str.parse::<std::net::Ipv6Addr>()
+                                {
+                                    found_prefix = Some((ipv6, plen));
+                                    break;
+                                }
                             }
                             if found_prefix.is_some() {
                                 break;
@@ -526,8 +584,8 @@ pub async fn link(
                             } else {
                                 let prefix_hextets = prefix_len / 16;
                                 let mut base_segs = base_ip.segments();
-                                for i in prefix_hextets..8 {
-                                    base_segs[i] = 0;
+                                for segment in base_segs.iter_mut().skip(prefix_hextets) {
+                                    *segment = 0;
                                 }
 
                                 // Compute how many addresses still needed
@@ -700,15 +758,15 @@ pub async fn link(
                             let mut found_v4_prefix: Option<(std::net::Ipv4Addr, usize)> = None;
                             for line in stdout4.lines() {
                                 for token in line.split_whitespace() {
-                                    if token.contains('.') && token.contains('/')
+                                    if token.contains('.')
+                                        && token.contains('/')
                                         && let Some((addr_str, plen_str)) = token.split_once('/')
-                                            && let Ok(plen) = plen_str.parse::<usize>()
-                                                && let Ok(ipv4) =
-                                                    addr_str.parse::<std::net::Ipv4Addr>()
-                                                {
-                                                    found_v4_prefix = Some((ipv4, plen));
-                                                    break;
-                                                }
+                                        && let Ok(plen) = plen_str.parse::<usize>()
+                                        && let Ok(ipv4) = addr_str.parse::<std::net::Ipv4Addr>()
+                                    {
+                                        found_v4_prefix = Some((ipv4, plen));
+                                        break;
+                                    }
                                 }
                                 if found_v4_prefix.is_some() {
                                     break;
@@ -877,34 +935,36 @@ pub async fn link(
                 let mut added = std::collections::HashSet::<String>::new();
                 if let Ok(resp) = client.get("https://api6.ipify.org").send().await
                     && let Ok(text) = resp.text().await
-                    && !text.is_empty() {
-                        addresses.push(text.clone());
-                        added.insert(text);
-                    }
+                    && !text.is_empty()
+                {
+                    addresses.push(text.clone());
+                    added.insert(text);
+                }
 
                 // If we still need additional addresses, enumerate local interfaces and collect candidates
                 if addresses.len() < num
-                    && let Ok(ifaces) = get_if_addrs() {
-                        let ips_iter = ifaces.into_iter().map(|ifa| ifa.addr.ip());
-                        let candidates = collect_ipv6_candidates(ips_iter, num);
-                        for v6 in candidates {
-                            let s = v6.to_string();
-                            if !added.contains(&s) {
-                                addresses.push(s.clone());
-                                added.insert(s);
-                            }
-                            if addresses.len() >= num {
-                                break;
-                            }
+                    && let Ok(ifaces) = get_if_addrs()
+                {
+                    let ips_iter = ifaces.into_iter().map(|ifa| ifa.addr.ip());
+                    let candidates = collect_ipv6_candidates(ips_iter, num);
+                    for v6 in candidates {
+                        let s = v6.to_string();
+                        if !added.contains(&s) {
+                            addresses.push(s.clone());
+                            added.insert(s);
                         }
-                        if !addresses.is_empty() {
-                            eprintln!(
-                                "{} Auto-detected IPv6 candidate(s): {:?}",
-                                "[WARN]".yellow(),
-                                addresses
-                            );
+                        if addresses.len() >= num {
+                            break;
                         }
                     }
+                    if !addresses.is_empty() {
+                        eprintln!(
+                            "{} Auto-detected IPv6 candidate(s): {:?}",
+                            "[WARN]".yellow(),
+                            addresses
+                        );
+                    }
+                }
             }
         }
 
@@ -1002,19 +1062,20 @@ fn collect_links_from_input(input: &str) -> Result<Vec<String>> {
         }
         // try parse small JSON fragments like ["..."] or "..."
         if (l.starts_with('[') || l.starts_with('"'))
-            && let Ok(v2) = serde_json::from_str::<Value>(l) {
-                if let Some(s) = v2.as_str() {
-                    out.push(s.to_string());
-                    continue;
-                } else if let Some(arr) = v2.as_array() {
-                    for item in arr {
-                        if let Some(s) = item.as_str() {
-                            out.push(s.to_string());
-                        }
+            && let Ok(v2) = serde_json::from_str::<Value>(l)
+        {
+            if let Some(s) = v2.as_str() {
+                out.push(s.to_string());
+                continue;
+            } else if let Some(arr) = v2.as_array() {
+                for item in arr {
+                    if let Some(s) = item.as_str() {
+                        out.push(s.to_string());
                     }
-                    continue;
                 }
+                continue;
             }
+        }
 
         // tokenise whitespace, pick tokens that look like vless links
         for tok in l.split_whitespace() {
@@ -1068,6 +1129,19 @@ fn parse_link_to_outbound(
     let port = url.port().unwrap_or(443);
 
     let query_pairs: std::collections::HashMap<_, _> = url.query_pairs().collect();
+
+    if query_pairs
+        .get("security")
+        .is_some_and(|security| security != "reality")
+    {
+        return Err(anyhow!("Only VLESS Reality links are supported"));
+    }
+    if query_pairs
+        .get("type")
+        .is_some_and(|transport| transport != "tcp")
+    {
+        return Err(anyhow!("Only TCP VLESS Reality links are supported"));
+    }
 
     let pbk = query_pairs
         .get("pbk")
@@ -1151,8 +1225,19 @@ pub async fn from_link(
 
     for (i, link) in links.iter().enumerate() {
         let (tag, outbound) = parse_link_to_outbound(link, i, packet_encoding)?;
+        if tag == "direct" || tags.contains(&tag) || (links.len() > 1 && tag == selector_tag) {
+            return Err(anyhow!(
+                "Duplicate or reserved outbound tag '{}'; give each link a unique fragment label",
+                tag
+            ));
+        }
         tags.push(tag.clone());
         outbounds.push(outbound);
+    }
+    if tags.len() > 1 && (selector_tag.is_empty() || selector_tag == "direct") {
+        return Err(anyhow!(
+            "Selector tag must be nonempty and different from 'direct'"
+        ));
     }
 
     // Build base config
@@ -1178,9 +1263,7 @@ pub async fn from_link(
                 "address": ["172.16.0.1/30", "fd00::1/126"],
                 "auto_route": true,
                 "strict_route": true,
-                "stack": "mixed",
-                "sniff": true,
-                "sniff_override_destination": true
+                "stack": "mixed"
             }]),
         );
     } else {
@@ -1198,30 +1281,35 @@ pub async fn from_link(
         }
     }
 
-    // outbounds: add basic direct/block then our vless entries
-    let mut final_outbounds = vec![
-        json!({"type":"direct","tag":"direct"}),
-        json!({"type":"block","tag":"block"}),
-    ];
-    final_outbounds.extend(outbounds.into_iter());
+    let mut final_outbounds = vec![json!({"type":"direct","tag":"direct"})];
+    final_outbounds.extend(outbounds);
 
-    if tags.len() > 1 {
+    let final_tag = if tags.len() > 1 {
         final_outbounds.push(json!({
             "type": "selector",
             "tag": selector_tag,
             "outbounds": tags.clone()
         }));
         map.insert("outbounds".to_string(), json!(final_outbounds));
-        map.insert("route".to_string(), json!({"final": selector_tag}));
+        selector_tag
     } else {
         let final_tag = tags.first().unwrap().clone();
         map.insert("outbounds".to_string(), json!(final_outbounds));
-        map.insert("route".to_string(), json!({"final": final_tag}));
-    }
+        final_tag
+    };
+    map.insert(
+        "route".to_string(),
+        json!({
+            "rules": [{"action": "sniff"}, {"protocol": "dns", "action": "hijack-dns"}],
+            "default_domain_resolver": "dns",
+            "auto_detect_interface": true,
+            "final": final_tag
+        }),
+    );
 
     let content = serde_json::to_string_pretty(&map)?;
     if let Some(p) = out {
-        std::fs::write(p, content)?;
+        crate::utils::write_private_file(&p, content.as_bytes())?;
     } else {
         println!("{}", content);
     }
@@ -1496,7 +1584,7 @@ mod tests {
                     "type": "vless",
                     "listen_port": 12345,
                     "users": [ { "name": "astrbot:SID1:0", "uuid": "1111", "flow": "xtls" } ],
-                    "tls": { "server_name": "sni.example" }
+                    "tls": { "enabled": true, "server_name": "sni.example", "reality": {"enabled": true} }
                 }
             ]
         });
@@ -1560,7 +1648,7 @@ mod tests {
                         { "name": "astr:SID1:0", "uuid": "1111", "flow": "xtls" },
                         { "name": "astr:SID2:0", "uuid": "2222", "flow": "xtls" }
                     ],
-                    "tls": { "server_name": "sni.example" }
+                    "tls": { "enabled": true, "server_name": "sni.example", "reality": {"enabled": true} }
                 }
             ]
         });
@@ -1597,7 +1685,7 @@ mod tests {
             IpAddr::V6("fc00::1".parse::<std::net::Ipv6Addr>().unwrap()), // ULA (fallback)
             IpAddr::V6("2001:db8::1".parse::<std::net::Ipv6Addr>().unwrap()), // global (preferred)
         ];
-        let chosen = choose_ipv6_candidate(ips.into_iter());
+        let chosen = choose_ipv6_candidate(ips);
         assert_eq!(
             chosen,
             Some("2001:db8::1".parse::<std::net::Ipv6Addr>().unwrap())
@@ -1613,7 +1701,7 @@ mod tests {
             IpAddr::V6("2001:db8::2".parse::<std::net::Ipv6Addr>().unwrap()),
             IpAddr::V6("fe80::1".parse::<std::net::Ipv6Addr>().unwrap()), // link-local (ignored)
         ];
-        let chosen = collect_ipv6_candidates(ips.into_iter(), 2);
+        let chosen = collect_ipv6_candidates(ips, 2);
         assert_eq!(
             chosen,
             vec![

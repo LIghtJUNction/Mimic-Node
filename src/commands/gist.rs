@@ -1,5 +1,8 @@
 use anyhow::{Context, Result};
-use std::process::Command;
+use std::io::Write;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::path::Path;
+use std::process::{Command, Stdio};
 
 const GIST_CONFIG_PATH: &str = "/etc/mimic-node/gist-id.conf";
 
@@ -17,35 +20,49 @@ pub struct GistConfig {
     pub cron: Option<String>,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct GistInfo {
-    pub gist_id: String,
-    pub remark: Option<String>,
-    pub username: String,
-    pub node_name: Option<String>,
-    pub convert_type: Option<String>,
-    pub cron: Option<String>,
-}
-
 impl GistConfig {
     pub fn load() -> Result<Self> {
         let content = std::fs::read_to_string(GIST_CONFIG_PATH)
             .with_context(|| format!("Failed to read {}", GIST_CONFIG_PATH))?;
-        let config: GistConfig = toml::from_str(&content)
-            .with_context(|| "Failed to parse gist config")?;
+        let config: GistConfig =
+            toml::from_str(&content).with_context(|| "Failed to parse gist config")?;
         Ok(config)
     }
 
     pub fn save(&self) -> Result<()> {
-        let content = toml::to_string_pretty(self)
-            .context("Failed to serialize gist config")?;
-        std::fs::write(GIST_CONFIG_PATH, content)
-            .with_context(|| format!("Failed to write {}", GIST_CONFIG_PATH))?;
+        self.save_to(Path::new(GIST_CONFIG_PATH))
+    }
+
+    fn save_to(&self, path: &Path) -> Result<()> {
+        let content = toml::to_string_pretty(self).context("Failed to serialize gist config")?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create {}", parent.display()))?;
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .mode(0o600)
+            .open(path)
+            .with_context(|| format!("Failed to open {}", path.display()))?;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("Failed to protect {}", path.display()))?;
+        file.set_len(0)?;
+        file.write_all(content.as_bytes())
+            .with_context(|| format!("Failed to write {}", path.display()))?;
         Ok(())
     }
 }
 
-pub fn setup(gist_id: Option<&str>, username: &str, remark: Option<&str>, node_name: Option<&str>, convert_type: Option<&str>, cron: Option<&str>) -> Result<()> {
+pub fn setup(
+    gist_id: Option<&str>,
+    username: &str,
+    remark: Option<&str>,
+    node_name: Option<&str>,
+    convert_type: Option<&str>,
+    cron: Option<&str>,
+) -> Result<()> {
     let gist_id = if let Some(id) = gist_id {
         id.to_string()
     } else {
@@ -53,14 +70,25 @@ pub fn setup(gist_id: Option<&str>, username: &str, remark: Option<&str>, node_n
         let placeholder = "/tmp/mimic-gist-placeholder.txt";
         std::fs::write(placeholder, "Mimic-Node subscription\n")?;
         let output = Command::new("gh")
-            .args(["gist", "create", "-f", "placeholder.txt", placeholder, "-d", "Mimic-Node"])
+            .args([
+                "gist",
+                "create",
+                "-f",
+                "placeholder.txt",
+                placeholder,
+                "-d",
+                "Mimic-Node",
+            ])
             .output()
             .context("Failed to create gist")
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         let _ = std::fs::remove_file(placeholder);
 
         if !output.status.success() {
-            anyhow::bail!("Failed to create gist: {}", String::from_utf8_lossy(&output.stderr));
+            anyhow::bail!(
+                "Failed to create gist: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         let output_str = String::from_utf8_lossy(&output.stdout);
@@ -120,7 +148,10 @@ pub fn revoke(gist_id: Option<&str>) -> Result<()> {
         .context("Failed to execute gh gist delete")?;
 
     if !output.status.success() {
-        anyhow::bail!("Failed to delete gist: {}", String::from_utf8_lossy(&output.stderr));
+        anyhow::bail!(
+            "Failed to delete gist: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     println!("Gist {} deleted", old_gist_id);
@@ -130,13 +161,24 @@ pub fn revoke(gist_id: Option<&str>) -> Result<()> {
     std::fs::write(placeholder, "Mimic-Node subscription\n")?;
 
     let output = Command::new("gh")
-        .args(["gist", "create", "-f", "placeholder.txt", placeholder, "-d", "Mimic-Node"])
+        .args([
+            "gist",
+            "create",
+            "-f",
+            "placeholder.txt",
+            placeholder,
+            "-d",
+            "Mimic-Node",
+        ])
         .output()
         .context("Failed to create new gist")?;
     let _ = std::fs::remove_file(placeholder);
 
     if !output.status.success() {
-        anyhow::bail!("Failed to create new gist: {}", String::from_utf8_lossy(&output.stderr));
+        anyhow::bail!(
+            "Failed to create new gist: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     let output_str = String::from_utf8_lossy(&output.stdout);
@@ -156,10 +198,16 @@ pub fn revoke(gist_id: Option<&str>) -> Result<()> {
     // Save new config
     let config = GistConfig {
         gist_id: new_gist_id.clone(),
-        username: existing_config.as_ref().map(|c| c.username.as_str()).unwrap_or("root").to_string(),
+        username: existing_config
+            .as_ref()
+            .map(|c| c.username.as_str())
+            .unwrap_or("root")
+            .to_string(),
         remark: existing_config.as_ref().and_then(|c| c.remark.clone()),
         node_name: existing_config.as_ref().and_then(|c| c.node_name.clone()),
-        convert_type: existing_config.as_ref().and_then(|c| c.convert_type.clone()),
+        convert_type: existing_config
+            .as_ref()
+            .and_then(|c| c.convert_type.clone()),
         cron: existing_config.as_ref().and_then(|c| c.cron.clone()),
     };
     config.save()?;
@@ -182,7 +230,10 @@ pub fn rm(gist_id: Option<&str>) -> Result<()> {
         .context("Failed to execute gh gist delete")?;
 
     if !output.status.success() {
-        anyhow::bail!("Failed to delete gist: {}", String::from_utf8_lossy(&output.stderr));
+        anyhow::bail!(
+            "Failed to delete gist: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     std::fs::remove_file(GIST_CONFIG_PATH)
@@ -218,7 +269,10 @@ pub fn list() -> Result<()> {
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or_else(|_| "LIghtJUNction".to_string());
 
-        println!("\nRaw URL: https://gist.githubusercontent.com/{}/{}/raw/subscription.txt", gh_user, config.gist_id);
+        println!(
+            "\nRaw URL: https://gist.githubusercontent.com/{}/{}/raw/subscription.txt",
+            gh_user, config.gist_id
+        );
         println!();
     }
 
@@ -245,9 +299,57 @@ pub fn list() -> Result<()> {
             }
         }
     } else {
-        eprintln!("Failed to list gists: {}", String::from_utf8_lossy(&output.stderr));
+        eprintln!(
+            "Failed to list gists: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
+    Ok(())
+}
+
+fn patch_gist(gist_id: &str, subscription: &str, command: &mut Command) -> Result<()> {
+    let json_input = serde_json::json!({
+        "files": {
+            "subscription.txt": {
+                "content": subscription
+            }
+        }
+    });
+    let mut child = command
+        .args([
+            "api",
+            &format!("gists/{gist_id}"),
+            "--method",
+            "PATCH",
+            "--input",
+            "-",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("Failed to update gist via API")?;
+    let write_result = child
+        .stdin
+        .take()
+        .context("Failed to open gist API input")
+        .and_then(|mut input| {
+            input
+                .write_all(json_input.to_string().as_bytes())
+                .context("Failed to send gist API input")
+        });
+    let output = child
+        .wait_with_output()
+        .context("Failed to wait for gist API update")?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "Failed to sync gist {gist_id}; existing gist and local config preserved: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    write_result?;
     Ok(())
 }
 
@@ -263,7 +365,10 @@ pub fn sync(include_hy2: bool) -> Result<()> {
         .context("Failed to run mimictl link")?;
 
     if !output.status.success() {
-        anyhow::bail!("mimictl link failed: {}", String::from_utf8_lossy(&output.stderr));
+        anyhow::bail!(
+            "mimictl link failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     let link_output = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -274,8 +379,8 @@ pub fn sync(include_hy2: bool) -> Result<()> {
     println!("Got VLESS link for {}", config.username);
 
     // Parse JSON array output from mimictl link
-    let vless_links: Vec<String> = serde_json::from_str(&link_output)
-        .unwrap_or_else(|_| vec![link_output.clone()]);
+    let vless_links: Vec<String> =
+        serde_json::from_str(&link_output).unwrap_or_else(|_| vec![link_output.clone()]);
 
     // Get Hysteria2 link if requested
     let mut all_links = vless_links;
@@ -286,7 +391,9 @@ pub fn sync(include_hy2: bool) -> Result<()> {
             .context("Failed to run hysteria2 link")?;
 
         if hy2_output.status.success() {
-            let hy2_link = String::from_utf8_lossy(&hy2_output.stdout).trim().to_string();
+            let hy2_link = String::from_utf8_lossy(&hy2_output.stdout)
+                .trim()
+                .to_string();
             if !hy2_link.is_empty() {
                 println!("Got Hysteria2 link");
                 all_links.push(hy2_link);
@@ -295,48 +402,55 @@ pub fn sync(include_hy2: bool) -> Result<()> {
     }
 
     // Use node_name from config, or "mimic-node" as fallback
-    let base_name = config.node_name.clone().unwrap_or_else(|| "mimic-node".to_string());
+    let base_name = config
+        .node_name
+        .clone()
+        .unwrap_or_else(|| "mimic-node".to_string());
 
     // Categorize links by type and assign names
     let mut ipv4_count = 0;
     let mut ipv6_count = 0;
     let mut hy2_count = 0;
 
-    let encoded_lines: Vec<String> = all_links.iter().filter_map(|link| {
-        if let Some(pos) = link.find("://") {
-            let proto = &link[..pos + 3]; // includes ://
-            let rest = &link[pos + 3..];
+    let encoded_lines: Vec<String> = all_links
+        .iter()
+        .filter_map(|link| {
+            if let Some(pos) = link.find("://") {
+                let proto = &link[..pos + 3]; // includes ://
+                let rest = &link[pos + 3..];
 
-            // Split content and old fragment
-            let (content, _old_fragment) = rest.split_once('#').unwrap_or((rest, ""));
+                // Split content and old fragment
+                let (content, _old_fragment) = rest.split_once('#').unwrap_or((rest, ""));
 
-            // Base64 encode the content (without the old fragment)
-            let encoded_content = base64::engine::general_purpose::STANDARD.encode(content.as_bytes());
+                // Base64 encode the content (without the old fragment)
+                let encoded_content =
+                    base64::engine::general_purpose::STANDARD.encode(content.as_bytes());
 
-            // Assign node name based on link type
-            let node_name = if link.starts_with("vless://") {
-                if link.contains("[") {
-                    // IPv6 address
-                    ipv6_count += 1;
-                    format!("{}-VLESS-IPv6-{}", base_name, ipv6_count)
+                // Assign node name based on link type
+                let node_name = if link.starts_with("vless://") {
+                    if link.contains("[") {
+                        // IPv6 address
+                        ipv6_count += 1;
+                        format!("{}-VLESS-IPv6-{}", base_name, ipv6_count)
+                    } else {
+                        // IPv4 address
+                        ipv4_count += 1;
+                        format!("{}-VLESS-IPv4-{}", base_name, ipv4_count)
+                    }
+                } else if link.starts_with("hysteria2://") || link.starts_with("hy2://") {
+                    hy2_count += 1;
+                    format!("{}-HY2-{}", base_name, hy2_count)
                 } else {
-                    // IPv4 address
-                    ipv4_count += 1;
-                    format!("{}-VLESS-IPv4-{}", base_name, ipv4_count)
-                }
-            } else if link.starts_with("hysteria2://") || link.starts_with("hy2://") {
-                hy2_count += 1;
-                format!("{}-HY2-{}", base_name, hy2_count)
-            } else {
-                base_name.clone()
-            };
+                    base_name.clone()
+                };
 
-            // Result: vless://base64(content)#nodename
-            Some(format!("{}{}#{}", proto, encoded_content, node_name))
-        } else {
-            None
-        }
-    }).collect();
+                // Result: vless://base64(content)#nodename
+                Some(format!("{}{}#{}", proto, encoded_content, node_name))
+            } else {
+                None
+            }
+        })
+        .collect();
 
     if encoded_lines.is_empty() {
         anyhow::bail!("No valid links found");
@@ -346,63 +460,8 @@ pub fn sync(include_hy2: bool) -> Result<()> {
     let lines_str = encoded_lines.join("\n");
     let final_encoded = base64::engine::general_purpose::STANDARD.encode(lines_str.as_bytes());
 
-    let filename = "subscription.txt";
-    let temp_file = format!("/tmp/{}", filename);
-    std::fs::write(&temp_file, &final_encoded)
-        .context("Failed to write temp file")?;
-
-    // Create JSON input for gh api
-    let json_input = serde_json::json!({
-        "files": {
-            "subscription.txt": {
-                "content": final_encoded
-            }
-        }
-    });
-    let json_file = format!("{}.json", temp_file);
-    std::fs::write(&json_file, json_input.to_string())
-        .context("Failed to write json input file")?;
-
-    // Use gh api with --input to read JSON from file
-    let output = Command::new("gh")
-        .args(["api", &format!("gists/{}", config.gist_id), "--method", "PATCH", "--input", &json_file])
-        .output()
-        .context("Failed to update gist via API")?;
-
-    let _ = std::fs::remove_file(&temp_file);
-    let _ = std::fs::remove_file(&json_file);
-
-    if !output.status.success() {
-        // Fallback: delete and recreate
-        let _ = Command::new("gh")
-            .args(["gist", "delete", &config.gist_id])
-            .output();
-
-        let output = Command::new("gh")
-            .args(["gist", "create", "-d", "Mimic-Node", "-f", filename, &temp_file])
-            .output()
-            .context("Failed to create gist")?;
-
-        if !output.status.success() {
-            anyhow::bail!("Failed to sync gist: {}", String::from_utf8_lossy(&output.stderr));
-        }
-
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        let new_gist_id = output_str.trim().split('/').next_back().unwrap_or_default().to_string();
-
-        let config = GistConfig {
-            gist_id: new_gist_id.clone(),
-            username: config.username.clone(),
-            remark: config.remark.clone(),
-            node_name: config.node_name.clone(),
-            convert_type: config.convert_type.clone(),
-            cron: config.cron.clone(),
-        };
-        config.save()?;
-        println!("Subscription synced to new gist {}", new_gist_id);
-    } else {
-        println!("Subscription synced to gist {}", config.gist_id);
-    }
+    patch_gist(&config.gist_id, &final_encoded, &mut Command::new("gh"))?;
+    println!("Subscription synced to gist {}", config.gist_id);
 
     // Get GitHub username for raw URL
     let gh_user = Command::new("gh")
@@ -411,6 +470,88 @@ pub fn sync(include_hy2: bool) -> Result<()> {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_else(|_| "LIghtJUNction".to_string());
 
-    println!("Raw URL: https://gist.githubusercontent.com/{}/{}/raw/subscription.txt", gh_user, config.gist_id);
+    println!(
+        "Raw URL: https://gist.githubusercontent.com/{}/{}/raw/subscription.txt",
+        gh_user, config.gist_id
+    );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_patch_preserves_existing_gist_and_sends_content_via_stdin() -> Result<()> {
+        let directory = std::env::current_dir()?
+            .join("target/test-tmp")
+            .join(format!("gist-patch-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory)?;
+        let mut command = Command::new("/bin/sh");
+        command
+            .current_dir(&directory)
+            .args([
+                "-c",
+                "printf '%s\\n' \"$@\" >> gh-args.txt; cat > gh-input.json; echo 'network unavailable' >&2; exit 7",
+                "mock-gh",
+            ]);
+
+        let error = patch_gist("existing-id", "encoded-subscription", &mut command)
+            .expect_err("a failed PATCH must not report success");
+        assert!(
+            error
+                .to_string()
+                .contains("existing gist and local config preserved")
+        );
+        assert!(error.to_string().contains("network unavailable"));
+        assert_eq!(
+            std::fs::read_to_string(directory.join("gh-args.txt"))?,
+            "api\ngists/existing-id\n--method\nPATCH\n--input\n-\n"
+        );
+        let input: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(directory.join("gh-input.json"))?)?;
+        assert_eq!(
+            input["files"]["subscription.txt"]["content"],
+            "encoded-subscription"
+        );
+        std::fs::remove_dir_all(directory)?;
+        Ok(())
+    }
+
+    #[test]
+    fn save_creates_parent_and_protects_existing_file() -> Result<()> {
+        let directory = std::env::current_dir()?
+            .join("target/test-tmp")
+            .join(format!("gist-config-{}", uuid::Uuid::new_v4()));
+        let path = directory.join("nested/gist-id.conf");
+        let config = GistConfig {
+            gist_id: "example-id".to_string(),
+            username: "alice".to_string(),
+            remark: None,
+            node_name: None,
+            convert_type: None,
+            cron: None,
+        };
+
+        config.save_to(&path)?;
+        assert_eq!(
+            std::fs::metadata(&path)?.permissions().mode() & 0o777,
+            0o600
+        );
+        let saved: GistConfig = toml::from_str(&std::fs::read_to_string(&path)?)?;
+        assert_eq!(saved.gist_id, "example-id");
+        assert_eq!(saved.username, "alice");
+
+        std::fs::write(&path, "previous configuration with trailing bytes")?;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))?;
+        config.save_to(&path)?;
+        assert_eq!(
+            std::fs::metadata(&path)?.permissions().mode() & 0o777,
+            0o600
+        );
+        let saved: GistConfig = toml::from_str(&std::fs::read_to_string(&path)?)?;
+        assert_eq!(saved.username, "alice");
+        std::fs::remove_dir_all(directory)?;
+        Ok(())
+    }
 }

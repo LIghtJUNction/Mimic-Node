@@ -1,106 +1,93 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
 
-# Configuration
-# The directory where sing-box expects its config
-TARGET_DIR="/etc/sing-box"
+TARGET_DIR=/etc/sing-box
+STATE_DIR=/var/lib/mimic-node
+UPPER_DIR=$STATE_DIR/upper
+WORK_DIR=$STATE_DIR/work
+RUNTIME_DIR=/run/mimic-node
+LOWER_BIND_DIR=$RUNTIME_DIR/lower
+PACKAGE_DEFAULT_DIR=/usr/share/mimic-node/default
 
-# Storage for our persistent changes and overlay workdir
-STATE_DIR="/var/lib/mimic-node"
-UPPER_DIR="$STATE_DIR/upper"
-WORK_DIR="$STATE_DIR/work"
+die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
+mount_field() { findmnt -rn -M "$1" -o "$2"; }
+is_owned_overlay() {
+    local fs source options
+    fs=$(mount_field "$TARGET_DIR" FSTYPE) || return 1
+    source=$(mount_field "$TARGET_DIR" SOURCE) || return 1
+    options=$(mount_field "$TARGET_DIR" OPTIONS) || return 1
+    [[ $fs == overlay && ( $source == mimic-node || $source == overlay ) ]] &&
+        [[ ,$options, == *,upperdir="$UPPER_DIR",* ]] &&
+        [[ ,$options, == *,workdir="$WORK_DIR",* ]]
+}
+is_original_lower() {
+    # Once the overlay is absent, the bind must refer to the original directory.
+    [[ $(stat -Lc '%d:%i' "$LOWER_BIND_DIR") == $(stat -Lc '%d:%i' "$TARGET_DIR") ]]
+}
 
-# Temporary location to expose the underlying system config (ReadOnly layer)
-LOWER_BIND_DIR="/run/mimic-node/lower"
+[[ $(id -u) == 0 ]] || die 'This script must run as root.'
+case "${1:-}" in start|stop|status) ;; *) die "Usage: $0 {start|stop|status}" ;; esac
 
-# Package provided defaults (ReadOnly layer, injects over system config)
-PACKAGE_DEFAULT_DIR="/usr/share/mimic-node/default"
-
-# Ensure script is run as root
-if [ "$(id -u)" -ne 0 ]; then
-    echo "Error: This script must be run as root." >&2
-    exit 1
-fi
+# Private root-owned runtime state also serializes direct and systemd calls.
+install -d -m700 "$RUNTIME_DIR"
+exec 9>"$RUNTIME_DIR/mount.lock"
+flock -x 9
 
 case "$1" in
     start)
-        # 0. Ensure OverlayFS kernel support
-        if ! grep -q "overlay" /proc/filesystems; then
-            echo "OverlayFS support not detected. Attempting to load 'overlay' module..."
-            modprobe overlay || {
-                echo "Error: Failed to load overlay module. Your kernel might not support OverlayFS." >&2
-                exit 1
-            }
-        fi
-
-        # 1. Ensure directories exist
-        # If sing-box isn't installed, create the target dir so we have something to mount on
-        if [ ! -d "$TARGET_DIR" ]; then
-            mkdir -p "$TARGET_DIR"
-        fi
-
-        mkdir -p "$UPPER_DIR" "$WORK_DIR" "$LOWER_BIND_DIR"
-
-        # 2. Check if already mounted
-        # Use findmnt to specifically check for overlay to avoid false positives with bind mounts
-        if findmnt -t overlay "$TARGET_DIR" >/dev/null; then
-            echo "Overlay already mounted at $TARGET_DIR"
+        if mount_field "$TARGET_DIR" FSTYPE >/dev/null; then
+            is_owned_overlay || die "Refusing to cover an unrelated mount at $TARGET_DIR."
+            printf 'Mimic-Node overlay is already mounted.\n'
             exit 0
         fi
-
-        # 3. Setup Lower Layer (System Config)
-        # We bind mount the original target directory to a temporary location.
-        # This allows the overlay to read the "original" files as the lower layer,
-        # even though we are about to cover the original path with the overlay mount.
-        if ! mountpoint -q "$LOWER_BIND_DIR"; then
-            mount --bind "$TARGET_DIR" "$LOWER_BIND_DIR"
-            # Remount as read-only to ensure we treat the system layer as immutable
-            mount -o remount,ro,bind "$LOWER_BIND_DIR"
+        if ! grep -qw overlay /proc/filesystems; then
+            modprobe overlay || die 'OverlayFS kernel support is unavailable.'
         fi
-
-        # 4. Mount OverlayFS
-        # Lower: The original system config (via bind mount) + Package defaults
-        # Upper: Our persistent modifications in /var/lib/mimic-node
-        LOWER_LAYERS="$LOWER_BIND_DIR"
-        if [ -d "$PACKAGE_DEFAULT_DIR" ]; then
-            LOWER_LAYERS="$PACKAGE_DEFAULT_DIR:$LOWER_LAYERS"
-        fi
-
-        mount -t overlay overlay \
-            -o lowerdir="$LOWER_LAYERS",upperdir="$UPPER_DIR",workdir="$WORK_DIR" \
-            "$TARGET_DIR"
-
-        echo "Mimic-Node overlay mounted successfully at $TARGET_DIR"
-        ;;
-
-    stop)
-        echo "Stopping Mimic-Node overlay..."
-
-        # Unmount the overlay
-        if mountpoint -q "$TARGET_DIR"; then
-            umount "$TARGET_DIR"
-            echo "Unmounted overlay at $TARGET_DIR"
-        fi
-
-        # Unmount the lower bind
-        if mountpoint -q "$LOWER_BIND_DIR"; then
-            umount "$LOWER_BIND_DIR"
-            echo "Unmounted lower bind at $LOWER_BIND_DIR"
-        fi
-        ;;
-
-    status)
-        if mountpoint -q "$TARGET_DIR"; then
-            echo "Active: Mimic-Node overlay is mounted."
-            findmnt "$TARGET_DIR"
+        mkdir -p "$TARGET_DIR"
+        install -d -m700 "$STATE_DIR" "$UPPER_DIR" "$WORK_DIR" "$LOWER_BIND_DIR"
+        lower_created=false
+        rollback_lower() {
+            if $lower_created; then
+                umount "$LOWER_BIND_DIR" || printf 'Warning: lower bind cleanup failed.\n' >&2
+            fi
+        }
+        trap rollback_lower EXIT
+        if mount_field "$LOWER_BIND_DIR" FSTYPE >/dev/null; then
+            is_original_lower || die "Unrelated lower bind at $LOWER_BIND_DIR."
         else
-            echo "Inactive: Mimic-Node overlay is NOT mounted."
+            mount --bind "$TARGET_DIR" "$LOWER_BIND_DIR"
+            lower_created=true
+        fi
+        mount -o remount,ro,bind "$LOWER_BIND_DIR"
+
+        # Existing system config wins; defaults only fill missing files.
+        lower_layers=$LOWER_BIND_DIR
+        if [[ -d $PACKAGE_DEFAULT_DIR ]]; then
+            lower_layers=$lower_layers:$PACKAGE_DEFAULT_DIR
+        fi
+        mount -t overlay mimic-node \
+            -o "lowerdir=$lower_layers,upperdir=$UPPER_DIR,workdir=$WORK_DIR" "$TARGET_DIR"
+        trap - EXIT
+        printf 'Mimic-Node overlay mounted at %s.\n' "$TARGET_DIR"
+        ;;
+    stop)
+        if mount_field "$TARGET_DIR" FSTYPE >/dev/null; then
+            is_owned_overlay || die "Refusing to unmount an unrelated mount at $TARGET_DIR."
+            umount "$TARGET_DIR"
+        fi
+        if mount_field "$LOWER_BIND_DIR" FSTYPE >/dev/null; then
+            is_original_lower || die "Refusing to unmount an unrelated lower bind at $LOWER_BIND_DIR."
+            umount "$LOWER_BIND_DIR"
+        fi
+        printf 'Mimic-Node overlay stopped; persistent state preserved.\n'
+        ;;
+    status)
+        if is_owned_overlay; then
+            findmnt -M "$TARGET_DIR"
+        else
+            printf 'Mimic-Node overlay is not mounted.\n'
             exit 3
         fi
-        ;;
-
-    *)
-        echo "Usage: $0 {start|stop|status}"
-        exit 1
         ;;
 esac

@@ -14,11 +14,11 @@
       "users": [],
       "tls": {
         "enabled": true,
-        "server_name": "",
+        "server_name": "www.microsoft.com",
         "reality": {
           "enabled": true,
           "handshake": {
-            "server": "https://microsoft.com",
+            "server": "www.microsoft.com",
             "server_port": 443
           },
           "private_key": "",
@@ -31,10 +31,6 @@
     {
       "type": "direct",
       "tag": "direct"
-    },
-    {
-      "type": "block",
-      "tag": "block"
     }
   ],
   "route": {
@@ -44,6 +40,15 @@
         "action": "sniff"
       }
     ],
-    "final": "direct"
+    "final": "direct",
+    "default_domain_resolver": "local"
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "local",
+        "tag": "local"
+      }
+    ]
   }
 }

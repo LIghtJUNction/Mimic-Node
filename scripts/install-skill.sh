@@ -1,62 +1,42 @@
 #!/bin/bash
-#
-# Mimic-Node Skill Installer for Claude Code
-# Usage: bash scripts/install-skill.sh [--global|--project]
-#
+# Install the skill embedded in mimictl; no separate source copy is required.
+# Usage: bash scripts/install-skill.sh [--global|--project] [--force]
 
-set -e
+set -euo pipefail
 
-SKILL_DIR="$HOME/.claude/skills/mimic-node"
-PROJECT_SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.claude/skills/mimic-node"
-INSTALL_TYPE="global"
-
+install_args=()
 while [[ $# -gt 0 ]]; do
-    case $1 in
+    case "$1" in
         --global)
-            INSTALL_TYPE="global"
-            shift
+            install_args=()
             ;;
         --project)
-            INSTALL_TYPE="project"
-            shift
+            install_args=(--project)
+            ;;
+        --force)
+            force=true
             ;;
         --help|-h)
-            echo "Usage: $0 [--global|--project]"
-            echo "  --global   Install skill to ~/.claude/skills/ (all projects)"
-            echo "  --project  Install skill to .claude/skills/ (current project only)"
+            echo "Usage: $0 [--global|--project] [--force]"
+            echo "  --global   Install to ~/.claude/skills/ (default)"
+            echo "  --project  Install to .claude/skills/ in the current directory"
+            echo "  --force    Replace an existing installation"
             exit 0
             ;;
         *)
-            echo "Unknown option: $1"
+            echo "Unknown option: $1" >&2
             exit 1
             ;;
     esac
+    shift
 done
 
-if [ "$INSTALL_TYPE" = "global" ]; then
-    TARGET_DIR="$SKILL_DIR"
-    echo "Installing mimic-node skill to: $TARGET_DIR"
-else
-    TARGET_DIR="$PROJECT_SKILL_DIR"
-    echo "Installing mimic-node skill to project: $TARGET_DIR"
+if ! command -v mimictl >/dev/null 2>&1; then
+    echo "mimictl is required. Install Mimic-Node before installing its skill." >&2
+    exit 127
 fi
 
-# Create directory
-mkdir -p "$TARGET_DIR"
-
-# Copy skill file
-cp "$PROJECT_SKILL_DIR/SKILL.md" "$TARGET_DIR/SKILL.md"
-
-echo ""
-echo "✓ Skill installed successfully!"
-echo ""
-echo "Usage in Claude Code:"
-echo "  /mimic-node"
-echo ""
-echo "The skill provides commands for:"
-echo "  - Installing Mimic-Node (AUR, source)"
-echo "  - Initial setup and configuration"
-echo "  - User management (add, list, update, delete)"
-echo "  - Service management (systemctl)"
-echo "  - Diagnostics and troubleshooting"
-echo "  - Protocol-specific commands (Hysteria2, DNS, etc.)"
+if [[ "${force:-false}" == true ]]; then
+    install_args+=(--force)
+fi
+exec mimictl skill install "${install_args[@]}"

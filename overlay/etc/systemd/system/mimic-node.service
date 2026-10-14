@@ -1,12 +1,10 @@
 [Unit]
-Description=Mimic-Node Auto Maintenance
+Description=Validate Mimic-Node Configuration
 Requires=mimic-node-mount.service
 After=network-online.target mimic-node-mount.service
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/mimictl apply
-
-[Install]
-WantedBy=multi-user.target
+UMask=0077
+ExecStart=/usr/bin/mimictl check

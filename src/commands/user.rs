@@ -2,47 +2,69 @@ use anyhow::{Result, anyhow};
 use colored::*;
 use regex::Regex;
 use std::collections::HashSet;
-use std::fs;
 
 use crate::config;
 use crate::paths::Paths;
-use crate::utils::{generate_keypair, generate_sid, generate_uuid, load_config, save_config};
+use crate::utils::{
+    generate_keypair, generate_sid, generate_uuid, load_config, save_config, write_private_file,
+};
 
 const FLOW_TYPE: &str = "xtls-rprx-vision";
 
+/// Locate the one inbound managed by VLESS user and Reality commands.
+/// Never infer the protocol from its position in the configuration.
+pub(crate) fn managed_vless_inbound_index(config: &config::SingBoxConfig) -> Result<usize> {
+    let mut matching = config.inbounds.iter().enumerate().filter(|(_, inbound)| {
+        inbound.protocol_type == "vless"
+            && inbound.tls.as_ref().is_some_and(|tls| {
+                tls.enabled && tls.reality.as_ref().is_some_and(|reality| reality.enabled)
+            })
+    });
+    let (index, _) = matching
+        .next()
+        .ok_or_else(|| anyhow!("No VLESS inbound with enabled TLS and Reality found."))?;
+    if matching.next().is_some() {
+        return Err(anyhow!(
+            "Multiple VLESS Reality inbounds found; the managed inbound is ambiguous."
+        ));
+    }
+    Ok(index)
+}
+
 /// Helper to synchronize reality.short_id list with active users
-fn sync_short_ids(config: &mut config::SingBoxConfig) {
-    if let Some(inbound) = config.inbounds.first_mut() {
-        let mut active_sids = Vec::new();
+fn sync_short_ids(inbound: &mut config::Inbound) {
+    let mut active_sids = Vec::new();
 
-        // Extract SIDs from all users
-        for user in &inbound.users {
-            let name = user.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let parts: Vec<&str> = name.split(':').collect();
-            // Format is email:sid:level. We need the SID (second to last)
-            if parts.len() >= 3
-                && let Some(sid) = parts.get(parts.len() - 2)
-                && !sid.is_empty()
-            {
-                active_sids.push(sid.to_string());
-            }
-        }
-
-        // Sort and dedup
-        active_sids.sort();
-        active_sids.dedup();
-
-        // Update config
-        if let Some(tls) = inbound.tls.as_mut()
-            && let Some(reality) = tls.reality.as_mut()
+    // Extract SIDs from all users
+    for user in &inbound.users {
+        let name = user.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let parts: Vec<&str> = name.split(':').collect();
+        // Format is email:sid:level. We need the SID (second to last)
+        if parts.len() >= 3
+            && let Some(sid) = parts.get(parts.len() - 2)
+            && !sid.is_empty()
         {
-            reality.short_id = active_sids;
+            active_sids.push(sid.to_string());
         }
+    }
+
+    // Sort and dedup
+    active_sids.sort();
+    active_sids.dedup();
+
+    // Update config
+    if let Some(tls) = inbound.tls.as_mut()
+        && let Some(reality) = tls.reality.as_mut()
+    {
+        reality.short_id = active_sids;
     }
 }
 
 /// Find matching user indices for a given target (uuid, anchored email, glob, or substring)
-pub(crate) fn find_matching_indices(users: &[serde_json::Value], target: &str) -> Result<Vec<usize>> {
+pub(crate) fn find_matching_indices(
+    users: &[serde_json::Value],
+    target: &str,
+) -> Result<Vec<usize>> {
     // If target looks like a UUID, try exact uuid match first
     if uuid::Uuid::parse_str(target).is_ok() {
         let exact: Vec<usize> = users
@@ -117,11 +139,12 @@ pub fn add(paths: &Paths, emails: Vec<String>, level: u32) -> Result<()> {
     // Check for private key first
     let input_path = paths.get_input_config_path();
     let mut config = load_config(input_path)?;
+    let inbound_index = managed_vless_inbound_index(&config)?;
 
     // Quick check if private key is present in loaded config
     let has_key = config
         .inbounds
-        .first()
+        .get(inbound_index)
         .and_then(|i| i.tls.as_ref())
         .and_then(|t| t.reality.as_ref())
         .map(|r| !r.private_key.is_empty())
@@ -134,7 +157,7 @@ pub fn add(paths: &Paths, emails: Vec<String>, level: u32) -> Result<()> {
         );
         // Generate keys in place into `config` object
         let (priv_key, pub_key) = generate_keypair()?;
-        if let Some(inbound) = config.inbounds.first_mut() {
+        if let Some(inbound) = config.inbounds.get_mut(inbound_index) {
             if inbound.tls.is_none() {
                 return Err(anyhow!("Config structure invalid: missing tls"));
             }
@@ -148,7 +171,7 @@ pub fn add(paths: &Paths, emails: Vec<String>, level: u32) -> Result<()> {
             }
         }
         // Save pubkey immediately to staging path if we are generating it
-        fs::write(&paths.staging_pubkey, &pub_key)?;
+        write_private_file(&paths.staging_pubkey, pub_key.as_bytes())?;
     }
 
     for email in emails {
@@ -162,7 +185,7 @@ pub fn add(paths: &Paths, emails: Vec<String>, level: u32) -> Result<()> {
             "flow": FLOW_TYPE
         });
 
-        if let Some(inbound) = config.inbounds.first_mut() {
+        if let Some(inbound) = config.inbounds.get_mut(inbound_index) {
             inbound.users.push(user);
         }
 
@@ -176,7 +199,7 @@ pub fn add(paths: &Paths, emails: Vec<String>, level: u32) -> Result<()> {
     }
 
     // Sync SIDs
-    sync_short_ids(&mut config);
+    sync_short_ids(&mut config.inbounds[inbound_index]);
 
     save_config(&paths.staging, &config)?;
 
@@ -191,8 +214,9 @@ pub fn add(paths: &Paths, emails: Vec<String>, level: u32) -> Result<()> {
 pub fn del(paths: &Paths, targets: Vec<String>, dry_run: bool, apply: bool) -> Result<()> {
     let input_path = paths.get_input_config_path();
     let mut config = load_config(input_path)?;
+    let inbound_index = managed_vless_inbound_index(&config)?;
 
-    if let Some(inbound) = config.inbounds.first_mut() {
+    if let Some(inbound) = config.inbounds.get_mut(inbound_index) {
         // Collect matches per target and unique indices to delete
         let mut to_delete: HashSet<usize> = HashSet::new();
         let mut per_target_matches: Vec<(String, Vec<usize>)> = Vec::new();
@@ -297,7 +321,7 @@ pub fn del(paths: &Paths, targets: Vec<String>, dry_run: bool, apply: bool) -> R
         }
 
         // Persist changes
-        sync_short_ids(&mut config);
+        sync_short_ids(&mut config.inbounds[inbound_index]);
         save_config(&paths.staging, &config)?;
 
         eprintln!(
@@ -321,12 +345,13 @@ pub fn del(paths: &Paths, targets: Vec<String>, dry_run: bool, apply: bool) -> R
 pub fn reset(paths: &Paths, targets: Vec<String>, dry_run: bool, apply: bool) -> Result<()> {
     let input_path = paths.get_input_config_path();
     let mut config = load_config(input_path)?;
+    let inbound_index = managed_vless_inbound_index(&config)?;
 
     // Plan resets first (to support dry-run and conflict-free application)
     // planned: (idx, old_name, old_uuid, new_name, new_sid)
     let mut planned: Vec<(usize, String, String, String, String)> = Vec::new();
 
-    if let Some(inbound) = config.inbounds.first_mut() {
+    if let Some(inbound) = config.inbounds.get_mut(inbound_index) {
         let mut seen: HashSet<usize> = HashSet::new();
 
         for target in &targets {
@@ -348,8 +373,16 @@ pub fn reset(paths: &Paths, targets: Vec<String>, dry_run: bool, apply: bool) ->
                 }
 
                 let user = &inbound.users[idx];
-                let old_name = user.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let old_uuid = user.get("uuid").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let old_name = user
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let old_uuid = user
+                    .get("uuid")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let parts: Vec<&str> = old_name.split(':').collect();
                 if parts.len() < 3 {
                     eprintln!(
@@ -397,7 +430,7 @@ pub fn reset(paths: &Paths, targets: Vec<String>, dry_run: bool, apply: bool) ->
     }
 
     // Apply resets
-    if let Some(inbound) = config.inbounds.first_mut() {
+    if let Some(inbound) = config.inbounds.get_mut(inbound_index) {
         for (idx, old_name, old_uuid, new_name, new_sid) in planned {
             let user = &mut inbound.users[idx];
             let new_uuid = generate_uuid();
@@ -421,7 +454,7 @@ pub fn reset(paths: &Paths, targets: Vec<String>, dry_run: bool, apply: bool) ->
     }
 
     // Persist changes to staging
-    sync_short_ids(&mut config);
+    sync_short_ids(&mut config.inbounds[inbound_index]);
     save_config(&paths.staging, &config)?;
 
     eprintln!(
@@ -440,11 +473,12 @@ pub fn reset(paths: &Paths, targets: Vec<String>, dry_run: bool, apply: bool) ->
 pub fn list(paths: &Paths, filter: Option<String>, json: bool) -> Result<()> {
     let input_path = paths.get_input_config_path();
     let config = load_config(input_path)?;
+    let inbound_index = managed_vless_inbound_index(&config)?;
 
     if json {
         // Collect matching users and output as JSON array
         let mut out: Vec<serde_json::Value> = Vec::new();
-        if let Some(inbound) = config.inbounds.first() {
+        if let Some(inbound) = config.inbounds.get(inbound_index) {
             for user in &inbound.users {
                 let name = user.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 if let Some(f) = &filter
@@ -459,7 +493,7 @@ pub fn list(paths: &Paths, filter: Option<String>, json: bool) -> Result<()> {
         return Ok(());
     }
 
-    if let Some(inbound) = config.inbounds.first() {
+    if let Some(inbound) = config.inbounds.get(inbound_index) {
         for user in &inbound.users {
             let name = user.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let uuid = user.get("uuid").and_then(|v| v.as_str()).unwrap_or("");
@@ -480,9 +514,10 @@ pub fn list(paths: &Paths, filter: Option<String>, json: bool) -> Result<()> {
 pub fn info(paths: &Paths, targets: Vec<String>, json: bool) -> Result<()> {
     let input_path = paths.get_input_config_path();
     let config = load_config(input_path)?;
+    let inbound_index = managed_vless_inbound_index(&config)?;
 
     let mut any_matched = false;
-    if let Some(inbound) = config.inbounds.first() {
+    if let Some(inbound) = config.inbounds.get(inbound_index) {
         let mut seen: HashSet<usize> = HashSet::new();
         let mut result: Vec<serde_json::Value> = Vec::new();
 
@@ -531,6 +566,8 @@ pub fn info(paths: &Paths, targets: Vec<String>, json: bool) -> Result<()> {
 /// - `--replace-first` will perform only the first match replacement (default replaces all matches).
 /// - `--dry-run` will show planned changes without writing staging.
 /// - `--apply` will apply staged changes immediately after saving.
+// Keep the existing CLI options together at the dispatch boundary.
+#[allow(clippy::too_many_arguments)]
 pub fn update(
     paths: &Paths,
     targets: Vec<String>,
@@ -566,11 +603,12 @@ pub fn update(
 
     let input_path = paths.get_input_config_path();
     let mut config = load_config(input_path)?;
+    let inbound_index = managed_vless_inbound_index(&config)?;
 
     // planned updates: (index, old_name, new_name)
     let mut planned: Vec<(usize, String, String)> = Vec::new();
 
-    if let Some(inbound) = config.inbounds.first_mut() {
+    if let Some(inbound) = config.inbounds.get_mut(inbound_index) {
         for target in &targets {
             let indices = find_matching_indices(&inbound.users, target)?;
 
@@ -599,7 +637,11 @@ pub fn update(
                 }
 
                 let user = &inbound.users[idx];
-                let old_name = user.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let old_name = user
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let parts: Vec<&str> = old_name.split(':').collect();
                 if parts.len() < 3 {
                     return Err(anyhow!(
@@ -663,7 +705,12 @@ pub fn update(
             .iter()
             .enumerate()
             .filter(|(i, _)| !planned_idxs.contains(i))
-            .map(|(_, u)| u.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string())
+            .map(|(_, u)| {
+                u.get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            })
             .collect();
 
         let mut seen_new: HashSet<String> = HashSet::new();
@@ -722,7 +769,7 @@ pub fn update(
         }
 
         // Persist
-        sync_short_ids(&mut config);
+        sync_short_ids(&mut config.inbounds[inbound_index]);
         save_config(&paths.staging, &config)?;
 
         eprintln!(
@@ -744,19 +791,225 @@ pub fn update(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
     use std::fs;
 
     use uuid::Uuid;
     // Use the global test PATH lock defined in `utils` (TEST_PATH_LOCK) to serialize tests
     // that modify PATH. This avoids races across test modules.
 
-    fn make_user(name: &str, uuid: &str) -> crate::config::User {
-        crate::config::User {
-            name: name.to_string(),
-            uuid: uuid.to_string(),
-            flow: FLOW_TYPE.to_string(),
+    fn make_user(name: &str, uuid: &str) -> serde_json::Value {
+        serde_json::json!({"name": name, "uuid": uuid, "flow": FLOW_TYPE})
+    }
+
+    struct UserFixture {
+        paths: Paths,
+    }
+
+    impl UserFixture {
+        fn new(inbounds: serde_json::Value) -> Self {
+            let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("target")
+                .join(format!("user-test-{}", Uuid::new_v4()));
+            let etc = root.join("etc/sing-box");
+            fs::create_dir_all(&etc).unwrap();
+            let paths = Paths {
+                config: etc.join("config.json"),
+                staging: etc.join("config.new"),
+                pubkey: etc.join("PUBKEY"),
+                staging_pubkey: etc.join("PUBKEY.new"),
+                sni_list: root.join("sni.txt"),
+                default_config: root.join("default/config.json"),
+                root,
+            };
+            fs::write(
+                &paths.config,
+                serde_json::to_vec(&serde_json::json!({"inbounds": inbounds})).unwrap(),
+            )
+            .unwrap();
+            Self { paths }
         }
+
+        fn staged(&self) -> config::SingBoxConfig {
+            load_config(&self.paths.staging).unwrap()
+        }
+    }
+
+    impl Drop for UserFixture {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.paths.root).unwrap();
+        }
+    }
+
+    fn reality_inbound() -> serde_json::Value {
+        serde_json::json!({
+            "type": "vless", "tag": "managed-vless",
+            "tls": {"enabled": true, "reality": {
+                "enabled": true, "private_key": "configured-key", "short_id": ["aabbccdd"]
+            }},
+            "users": [make_user(
+                "alice@example.com:aabbccdd:0", "11111111-1111-1111-1111-111111111111"
+            )]
+        })
+    }
+
+    #[test]
+    fn managed_inbound_is_selected_by_protocol_and_enabled_reality() {
+        let fixture = UserFixture::new(serde_json::json!([
+            {"type": "hysteria2", "users": [{"password": "secret"}]},
+            {"type": "vless", "tls": {"enabled": true}},
+            {"type": "vless", "tls": {"enabled": true, "reality": {"enabled": false}}},
+            reality_inbound()
+        ]));
+        let config = load_config(&fixture.paths.config).unwrap();
+        assert_eq!(managed_vless_inbound_index(&config).unwrap(), 3);
+    }
+
+    #[test]
+    fn user_mutations_preserve_hysteria_when_inbounds_are_reordered() {
+        let hy2_user = serde_json::json!({
+            "name": "alice@example.com:aabbccdd:0", "password": "hy2-password"
+        });
+        let fixture = UserFixture::new(serde_json::json!([
+            {"type": "hysteria2", "users": [hy2_user.clone()]},
+            reality_inbound()
+        ]));
+        add(&fixture.paths, vec!["bob@example.com".to_string()], 2).unwrap();
+        let staged = fixture.staged();
+        assert_eq!(staged.inbounds[0].users, vec![hy2_user.clone()]);
+        assert_eq!(staged.inbounds[1].users.len(), 2);
+        assert_eq!(
+            staged.inbounds[1]
+                .tls
+                .as_ref()
+                .unwrap()
+                .reality
+                .as_ref()
+                .unwrap()
+                .short_id
+                .len(),
+            2
+        );
+
+        update(
+            &fixture.paths,
+            vec!["alice@example.com".to_string()],
+            Some(3),
+            None,
+            None,
+            false,
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            fixture.staged().inbounds[1].users[0]["name"],
+            "alice@example.com:aabbccdd:3"
+        );
+
+        reset(
+            &fixture.paths,
+            vec!["alice@example.com".to_string()],
+            false,
+            false,
+        )
+        .unwrap();
+        let staged = fixture.staged();
+        let new_name = staged.inbounds[1].users[0]["name"].as_str().unwrap();
+        assert!(new_name.starts_with("alice@example.com:"));
+        assert!(new_name.ends_with(":3"));
+        assert_ne!(new_name, "alice@example.com:aabbccdd:3");
+        let new_sid = new_name.split(':').nth(1).unwrap().to_string();
+        let new_uuid = staged.inbounds[1].users[0]["uuid"].as_str().unwrap();
+        assert_ne!(new_uuid, "11111111-1111-1111-1111-111111111111");
+        Uuid::parse_str(new_uuid).unwrap();
+
+        // Reads must use the same VLESS inbound, including users absent from Hysteria.
+        list(&fixture.paths, None, true).unwrap();
+        info(&fixture.paths, vec!["bob@example.com".to_string()], true).unwrap();
+
+        del(
+            &fixture.paths,
+            vec!["bob@example.com".to_string()],
+            false,
+            false,
+        )
+        .unwrap();
+        let staged = fixture.staged();
+        assert_eq!(staged.inbounds[0].users, vec![hy2_user]);
+        assert_eq!(staged.inbounds[1].users.len(), 1);
+        assert_eq!(
+            staged.inbounds[1]
+                .tls
+                .as_ref()
+                .unwrap()
+                .reality
+                .as_ref()
+                .unwrap()
+                .short_id,
+            vec![new_sid]
+        );
+        assert!(
+            !fixture.paths.staging_pubkey.exists(),
+            "the existing Reality key must be retained"
+        );
+    }
+
+    #[test]
+    fn all_user_commands_reject_missing_managed_inbound_without_staging() {
+        let fixture = UserFixture::new(serde_json::json!([
+            {"type": "hysteria2", "users": [{"name": "alice@example.com:aabbccdd:0", "password": "secret"}]}
+        ]));
+        let before = fs::read(&fixture.paths.config).unwrap();
+        let results = [
+            add(&fixture.paths, vec!["bob@example.com".to_string()], 0),
+            del(
+                &fixture.paths,
+                vec!["alice@example.com".to_string()],
+                false,
+                false,
+            ),
+            reset(
+                &fixture.paths,
+                vec!["alice@example.com".to_string()],
+                false,
+                false,
+            ),
+            list(&fixture.paths, None, true),
+            info(&fixture.paths, vec!["alice@example.com".to_string()], true),
+            update(
+                &fixture.paths,
+                vec!["alice@example.com".to_string()],
+                Some(1),
+                None,
+                None,
+                false,
+                false,
+                false,
+                false,
+            ),
+        ];
+        for result in results {
+            assert!(result.unwrap_err().to_string().contains("No VLESS inbound"));
+        }
+        assert_eq!(fs::read(&fixture.paths.config).unwrap(), before);
+        assert!(!fixture.paths.staging.exists());
+        assert!(!fixture.paths.staging_pubkey.exists());
+    }
+
+    #[test]
+    fn ambiguous_reality_inbounds_are_rejected_without_staging() {
+        let fixture = UserFixture::new(serde_json::json!([reality_inbound(), reality_inbound()]));
+        let config = load_config(&fixture.paths.config).unwrap();
+        assert!(
+            managed_vless_inbound_index(&config)
+                .unwrap_err()
+                .to_string()
+                .contains("ambiguous")
+        );
+        assert!(add(&fixture.paths, vec!["bob@example.com".to_string()], 0).is_err());
+        assert!(!fixture.paths.staging.exists());
+        assert!(!fixture.paths.staging_pubkey.exists());
     }
 
     #[test]
@@ -818,128 +1071,57 @@ mod tests {
         assert_eq!(idxs, vec![0]);
     }
 
-    // ---------------------------------------------------------------------
-    // New tests: update with email replace (non-regex) and dry-run behavior
-    // ---------------------------------------------------------------------
     #[test]
     fn test_update_email_replace_non_regex() {
-        // setup temp paths
-        let tmp = env::temp_dir();
-        let dir = tmp.join(format!("mimic_node_test_update_{}", Uuid::new_v4()));
-        let etc = dir.join("etc").join("sing-box");
-        let usr = dir
-            .join("usr")
-            .join("share")
-            .join("mimic-node")
-            .join("default");
-        fs::create_dir_all(&etc).unwrap();
-        fs::create_dir_all(&usr).unwrap();
+        let mut inbound = reality_inbound();
+        inbound["users"] = serde_json::json!([
+            make_user("bob@old.com:SID2:0", "2222"),
+            make_user("alice@example.com:SID1:0", "1111")
+        ]);
+        let fixture = UserFixture::new(serde_json::json!([inbound]));
 
-        let paths = crate::paths::Paths {
-            root: dir.clone(),
-            config: etc.join("config.json"),
-            staging: etc.join("config.new"),
-            pubkey: etc.join("PUBKEY"),
-            staging_pubkey: etc.join("PUBKEY.new"),
-            sni_list: usr.join("sni.txt"),
-            default_config: usr.join("default/config.json"),
-        };
-
-        // Minimal config with one user to be replaced
-        let cfg = serde_json::json!({
-            "inbounds": [
-                {
-                    "type": "vless",
-                    "users": [
-                        { "name": "bob@old.com:SID2:0", "uuid": "2222", "flow": "xtls" },
-                        { "name": "alice@example.com:SID1:0", "uuid": "1111", "flow": "xtls" }
-                    ]
-                }
-            ]
-        });
-        fs::write(&paths.config, serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
-
-        // Run update with replace FROM=@old.com TO=@new.com
         update(
-            &paths,
+            &fixture.paths,
             vec!["*@old.com".to_string()],
             None,
             None,
             Some(vec!["@old.com".to_string(), "@new.com".to_string()]),
-            false, // regex
-            false, // replace_first
-            false, // dry_run
-            false, // apply
+            false,
+            false,
+            false,
+            false,
         )
         .expect("update should succeed");
 
-        // Confirm staging contains updated name for bob
-        let staged = fs::read_to_string(&paths.staging).unwrap();
-        assert!(staged.contains("bob@new.com:SID2:0"));
-
-        if let Err(e) = fs::remove_dir_all(&dir) {
-            eprintln!("[WARN] Failed to remove test directory {:?}: {}", dir, e);
-        }
+        assert_eq!(
+            fixture.staged().inbounds[0].users[0]["name"],
+            "bob@new.com:SID2:0"
+        );
     }
 
     #[test]
     fn test_update_email_replace_dry_run() {
-        // setup temp paths
-        let tmp = env::temp_dir();
-        let dir = tmp.join(format!("mimic_node_test_update_dry_{}", Uuid::new_v4()));
-        let etc = dir.join("etc").join("sing-box");
-        let usr = dir
-            .join("usr")
-            .join("share")
-            .join("mimic-node")
-            .join("default");
-        fs::create_dir_all(&etc).unwrap();
-        fs::create_dir_all(&usr).unwrap();
+        let mut inbound = reality_inbound();
+        inbound["users"] = serde_json::json!([make_user("bob@old.com:SID2:0", "2222")]);
+        let fixture = UserFixture::new(serde_json::json!([inbound]));
 
-        let paths = crate::paths::Paths {
-            root: dir.clone(),
-            config: etc.join("config.json"),
-            staging: etc.join("config.new"),
-            pubkey: etc.join("PUBKEY"),
-            staging_pubkey: etc.join("PUBKEY.new"),
-            sni_list: usr.join("sni.txt"),
-            default_config: usr.join("default/config.json"),
-        };
-
-        let cfg = serde_json::json!({
-            "inbounds": [
-                {
-                    "type": "vless",
-                    "users": [
-                        { "name": "bob@old.com:SID2:0", "uuid": "2222", "flow": "xtls" }
-                    ]
-                }
-            ]
-        });
-        fs::write(&paths.config, serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
-
-        // Dry run: should not create staging file
         update(
-            &paths,
+            &fixture.paths,
             vec!["*@old.com".to_string()],
             None,
             None,
             Some(vec!["@old.com".to_string(), "@new.com".to_string()]),
-            false, // regex
-            false, // replace_first
-            true,  // dry_run
-            false, // apply
+            false,
+            false,
+            true,
+            false,
         )
         .expect("dry-run update should succeed");
 
         assert!(
-            !paths.staging.exists(),
+            !fixture.paths.staging.exists(),
             "staging should not be created in dry-run"
         );
-
-        if let Err(e) = fs::remove_dir_all(&dir) {
-            eprintln!("[WARN] Failed to remove test directory {:?}: {}", dir, e);
-        }
     }
 
     // Test removed: this test invoked `apply()` which can trigger privileged systemctl calls.

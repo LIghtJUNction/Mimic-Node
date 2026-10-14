@@ -1,35 +1,29 @@
 use anyhow::Result;
 use colored::*;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const SKILL_DOC: &str = r#"---
 name: mimic-node
-description: Deploy, configure and manage Mimic-Node proxy server. Use when user asks to install, setup, configure, upgrade, troubleshoot mimic-node or manage its users. Supports sing-box, VLESS, Reality, Hysteria2, QUIC protocols.
+description: Deploy, configure and manage Mimic-Node on Arch Linux. Use for installation, VLESS Reality setup, optional Hysteria2 setup, user management and diagnostics.
 ---
 
 # Mimic-Node Deployment Skill
 
-You are a Mimic-Node expert AI assistant. When the user asks to deploy, configure, or manage Mimic-Node, you should AUTOMATICALLY perform all the steps for them - don't just describe, DO it.
+Help the user carry out authorized Mimic-Node maintenance. Inspect the target host, installed sing-box version, service state and existing configuration before making changes. Back up persistent state before a reset or migration. Preserve existing users and keys when upgrading.
 
 ## 🤖 AI Assistant Mode
 
-When the user says "帮我部署 Mimic-Node" or "deploy Mimic-Node" or any deployment request:
-
-1. **DO NOT** just show commands - actually execute them
-2. **DO NOT** ask for confirmation on routine steps
-3. **DO** run each command and show the user the results
-4. **DO** explain what you did in Chinese or English based on user preference
+For an authorized deployment, execute the necessary commands and verify their results. Explain what changed in the user's language. Package installation and service changes must target the host the user chose. Do not regenerate an existing node's keys unless requested.
 
 Example workflow for "帮我部署 Mimic-Node":
 ```bash
-# Execute these commands automatically:
+# On a new Arch Linux server:
 paru -S mimic-node-git
 sudo systemctl enable --now mimic-node-mount.service
 sudo mimictl gen-keys
 sudo mimictl add my@email.com --level 1
-sudo mimictl verify
-sudo mimictl apply
+sudo mimictl check && sudo mimictl apply
 sudo systemctl enable --now sing-box
 ```
 
@@ -43,7 +37,7 @@ Uses **OverlayFS** to overlay a writable layer (`/var/lib/mimic-node/upper`) on 
 
 - **Persistence**: All config changes stored in `/var/lib/mimic-node`
 - **Safety**: Reinstall/upgrade does NOT overwrite keys or user data
-- **Clean**: Delete `/var/lib/mimic-node` to reset completely
+- **Reset**: Back up persistent state, stage changes with `mimictl reset`, review them, then apply. Deleting `/var/lib/mimic-node` destroys keys, users and recovery data.
 - **Whiteout Files**: `c--------- 0, 0` files in upper layer are normal OverlayFS whiteouts (tombstones), not errors
 
 ## Quick Install (from AUR)
@@ -61,8 +55,7 @@ yay -S mimic-node-git
 ```bash
 git clone https://github.com/LIghtJUNction/Mimic-Node.git
 cd Mimic-Node
-makepkg -s
-sudo pacman -U *.pkg.tar.zst
+makepkg -si
 ```
 
 ## Initial Setup
@@ -71,7 +64,7 @@ sudo pacman -U *.pkg.tar.zst
 # 1. Enable OverlayFS mount (critical - enables config writes)
 sudo systemctl enable --now mimic-node-mount.service
 
-# 2. Generate Reality keys + auto-detect best SNI
+# 2. Generate Reality keys for a new installation
 sudo mimictl gen-keys
 
 # 3. Set SNI manually (recommended - choose your own)
@@ -80,9 +73,8 @@ sudo mimictl sni <domain>  # e.g., www.microsoft.com
 # 4. Add first user
 sudo mimictl add my_email@example.com --level 1
 
-# 5. Verify and apply config
-sudo mimictl verify
-sudo mimictl apply
+# 5. Check with sing-box and apply config
+sudo mimictl check && sudo mimictl apply
 
 # 6. Start services
 sudo systemctl enable --now sing-box
@@ -99,7 +91,8 @@ sudo mimictl setup
 
 ```bash
 # Enable and start
-sudo systemctl enable --now sing-box mimic-node-mount mimic-node
+sudo systemctl enable --now mimic-node-mount.service
+sudo systemctl enable --now sing-box.service mimic-node.timer mimic-node.path
 
 # Check status
 sudo systemctl status sing-box
@@ -190,7 +183,7 @@ sudo mimictl show
 # Diff current vs default
 sudo mimictl diff
 
-# Verify config integrity
+# Verify VLESS Reality key and user integrity
 sudo mimictl verify --verbose
 
 # Discard staged changes
@@ -199,7 +192,7 @@ sudo mimictl discard --item pubkey --force
 
 # Reset to defaults (preserve users with --keep-user)
 sudo mimictl reset --keep-user alice@example.com
-sudo mimictl apply
+sudo mimictl check && sudo mimictl apply
 
 # Upgrade config to latest defaults
 sudo mimictl upgrade --dry-run
@@ -225,19 +218,21 @@ sudo mimictl diagnose --verbose
 #   - DNS configuration
 #   - Permission settings
 #   - Kernel TLS / BBR support
-#   - Recent git commits
 ```
 
 ## Protocol-Specific Commands
 
 ### Hysteria2
 ```bash
-# Setup Hysteria2 inbound
-sudo mimictl hysteria2 setup --port 443 --masquerade microsoft.com --up 100 --down 200
+# Optional: stage Hysteria2 with an existing certificate and private key
+sudo mimictl hysteria2 setup --port 443 --masquerade https://microsoft.com --cert /etc/ssl/node/fullchain.pem --key /etc/ssl/node/privkey.pem --up 100 --down 200
 
 # Add Hysteria2 user
 sudo mimictl hysteria2 add-user --name alice
+sudo mimictl check && sudo mimictl apply
 ```
+
+Hysteria2 is not enabled by default. Supply real TLS certificate/key paths and allow the selected UDP port in the firewall. VLESS Reality uses TCP, so it can share port 443 with Hysteria2 on UDP.
 
 ### DNS
 ```bash
@@ -256,18 +251,14 @@ mimictl completions --shell zsh --apply
 mimictl completions --shell fish --apply
 ```
 
-## Supported Protocols
+## Default and Optional Protocols
 
 | Protocol | Port | Features |
 |----------|------|----------|
-| VLESS+Reality | 443 | TCP+UDP over TCP, Multiplex, Brutal |
-| VLESS+WebSocket | 8080 | HTTP/2, path /vless-ws |
-| Hysteria2 | 443 | QUIC, OBFS, BBR |
-| TUIC | 8443 | QUIC, BBR |
-| AnyTLS | 8444 | Padding scheme |
-| Cloudflared | - | H2, post-quantum |
-| SSH | 22 | Direct |
-| TUN | - | VPN mode, auto_route |
+| VLESS+Reality | TCP 443 | Default inbound; generate keys and add users before use |
+| Hysteria2 | UDP 443 | Optional; configure with real TLS certificates |
+
+Other sing-box protocols require a configuration you create and validate yourself; they are not preconfigured by Mimic-Node.
 
 ## Default Paths
 
@@ -289,23 +280,22 @@ mimictl completions --shell fish --apply
 ## Security Notes
 
 - Reality SNI should point to a legitimate domain (e.g., microsoft.com)
-- Enable protocol sniffing for better routing
-- Use `prefer_ipv4` DNS strategy for stability
-- Enable BBR congestion control: `sudo sysctl -w net.ipv4.tcp_congestion_control=bbr`
-- Keep `mimictl diagnose --verbose` clean of warnings
+- Validate staged changes with the installed sing-box before applying them
+- Keep private keys and persistent configuration readable only by the intended service account and administrator
+- Review `mimictl diagnose --verbose` warnings in the context of the selected protocols
 
 ## Troubleshooting
 
 1. **Service won't start**: `sudo journalctl -u sing-box -xe`
 2. **Port conflicts**: `sudo ss -tlnp | grep 443`
-3. **Config errors**: `mimictl verify --verbose`
+3. **Config errors**: `mimictl check`; for VLESS Reality keys and users, also run `mimictl verify --verbose`
 4. **Missing Reality keys**: `mimictl gen-keys`
 5. **SNI issues**: `mimictl sni --file /usr/share/mimic-node/sni.txt`
 6. **Overlay mount failed**: Check `mountpoint /etc/sing-box`; try `sudo systemctl restart mimic-node-mount`
 
 ## Claude Code Skill
 
-This skill is auto-installed by mimictl:
+Install this skill explicitly with the installed mimictl (without sudo):
 ```bash
 mimictl skill install      # Install to ~/.claude/skills/
 mimictl skill install --project   # Install to project
@@ -320,12 +310,17 @@ fn get_skill_dir(project: bool) -> PathBuf {
             .join(".claude/skills/mimic-node")
     } else {
         dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from(&format!("/home/{}", std::env::var("USER").unwrap_or_default())))
+            .unwrap_or_else(|| {
+                PathBuf::from(&format!(
+                    "/home/{}",
+                    std::env::var("USER").unwrap_or_default()
+                ))
+            })
             .join(".claude/skills/mimic-node")
     }
 }
 
-fn is_installed(skill_dir: &PathBuf) -> bool {
+fn is_installed(skill_dir: &Path) -> bool {
     skill_dir.exists() && skill_dir.join("SKILL.md").exists()
 }
 
@@ -336,12 +331,19 @@ pub fn install(project: bool, force: bool) -> Result<()> {
     if project {
         println!("{}", "  Installing Mimic-Node skill to project...".cyan());
     } else {
-        println!("{}", "  Installing Mimic-Node skill to ~/.claude/skills/...".cyan());
+        println!(
+            "{}",
+            "  Installing Mimic-Node skill to ~/.claude/skills/...".cyan()
+        );
     }
 
     if is_installed(&skill_dir) && !force {
         println!();
-        println!("{} Skill already installed at {}", "[INFO]".cyan(), skill_dir.display());
+        println!(
+            "{} Skill already installed at {}",
+            "[INFO]".cyan(),
+            skill_dir.display()
+        );
         println!("{} Use --force to reinstall", "[*]".yellow());
         return Ok(());
     }
@@ -378,14 +380,24 @@ pub fn uninstall(project: bool) -> Result<()> {
 
     println!();
     if project {
-        println!("{}", "  Uninstalling Mimic-Node skill from project...".cyan());
+        println!(
+            "{}",
+            "  Uninstalling Mimic-Node skill from project...".cyan()
+        );
     } else {
-        println!("{}", "  Uninstalling Mimic-Node skill from ~/.claude/skills/...".cyan());
+        println!(
+            "{}",
+            "  Uninstalling Mimic-Node skill from ~/.claude/skills/...".cyan()
+        );
     }
 
     if !is_installed(&skill_dir) {
         println!();
-        println!("{} Skill not installed at {}", "[INFO]".yellow(), skill_dir.display());
+        println!(
+            "{} Skill not installed at {}",
+            "[INFO]".yellow(),
+            skill_dir.display()
+        );
         return Ok(());
     }
 

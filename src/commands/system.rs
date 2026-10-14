@@ -1,6 +1,7 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use colored::*;
 use std::fs;
+use std::io::{BufRead, Write};
 use std::process::Command;
 
 use crate::paths::Paths;
@@ -110,51 +111,69 @@ pub fn reset(paths: &Paths, keep_users_emails: Vec<String>) -> Result<()> {
         "[INFO]".green()
     );
 
-    // Load default config
-    let default_config = load_config(&paths.default_config)?;
-    let mut new_config = default_config.clone();
+    let mut new_config = load_config(&paths.default_config)?;
 
     // Preserve users
     if !keep_users_emails.is_empty() {
         let current_config = load_config(paths.get_input_config_path())?;
-
-        for email in keep_users_emails {
-            eprintln!("{} Preserving user: {}", "[INFO]".green(), email);
-
-            // Find in current
-            let user_opt = current_config.inbounds.first().and_then(|i| {
-                i.users
-                    .iter()
-                    .find(|u| {
-                        let name = u.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                        name.starts_with(&format!("{}:", email))
-                    })
-            });
-
-            if let Some(user) = user_opt {
-                // Get SID
-                let name = user.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                let parts: Vec<&str> = name.split(':').collect();
-                let sid = parts.get(parts.len() - 2).unwrap_or(&"").to_string();
-
-                // Add to new config
-                if let Some(inbound) = new_config.inbounds.first_mut() {
-                    inbound.users.push(user.clone());
-                    if let Some(tls) = inbound.tls.as_mut()
-                        && let Some(reality) = tls.reality.as_mut()
-                    {
-                        reality.short_id.push(sid);
-                        reality.short_id.sort();
-                        reality.short_id.dedup();
-                    }
-                }
-            } else {
+        let current_index = crate::commands::user::managed_vless_inbound_index(&current_config)
+            .context("Cannot preserve users from current configuration")?;
+        let default_index = crate::commands::user::managed_vless_inbound_index(&new_config)
+            .context("Cannot preserve users in default configuration")?;
+        let source = &current_config.inbounds[current_index];
+        let mut kept_users = Vec::new();
+        let mut kept_sids = Vec::new();
+        for email in &keep_users_emails {
+            let users: Vec<_> = source
+                .users
+                .iter()
+                .filter(|user| {
+                    user.get("name")
+                        .and_then(|value| value.as_str())
+                        .is_some_and(|name| name.starts_with(&format!("{}:", email)))
+                })
+                .collect();
+            if users.is_empty() {
                 eprintln!(
                     "{} User '{}' not found in current config, skipping.",
                     "[WARN]".yellow(),
                     email
                 );
             }
+            for user in users {
+                if kept_users.contains(user) {
+                    continue;
+                }
+                let name = user
+                    .get("name")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                let mut parts = name.rsplitn(3, ':');
+                let level = parts.next().unwrap_or("");
+                let sid = parts.next().unwrap_or("");
+                if parts.next().is_none() || level.is_empty() || sid.is_empty() {
+                    return Err(anyhow!("Cannot preserve user with invalid name: {}", name));
+                }
+                eprintln!("{} Preserving user: {}", "[INFO]".green(), email);
+                kept_users.push(user.clone());
+                kept_sids.push(sid.to_string());
+            }
+        }
+
+        if kept_users.is_empty() {
+            return Err(anyhow!(
+                "None of the requested users were found; reset cancelled"
+            ));
+        }
+        let target = &mut new_config.inbounds[default_index];
+        target.users = kept_users;
+        // Existing client links depend on the Reality key and TLS identity. Keep
+        // them together instead of leaving an empty key from the default template.
+        target.tls = source.tls.clone();
+        if let Some(reality) = target.tls.as_mut().and_then(|tls| tls.reality.as_mut()) {
+            kept_sids.sort();
+            kept_sids.dedup();
+            reality.short_id = kept_sids;
         }
     }
 
@@ -171,311 +190,304 @@ pub fn reset(paths: &Paths, keep_users_emails: Vec<String>) -> Result<()> {
 /// Represents a single difference between two JSON values
 #[derive(Debug, Clone)]
 pub enum DiffEntry {
-    Added { path: String, value: serde_json::Value },
-    Removed { path: String, value: serde_json::Value },
-    Modified { path: String, old_value: serde_json::Value, new_value: serde_json::Value },
+    Added {
+        path: String,
+        value: serde_json::Value,
+    },
+    Removed {
+        path: String,
+        value: serde_json::Value,
+    },
+    Modified {
+        path: String,
+        old_value: serde_json::Value,
+        new_value: serde_json::Value,
+    },
 }
 
-/// Recursively collect all differences between two JSON objects
-fn collect_diffs(path: &str, old_val: &serde_json::Value, new_val: &serde_json::Value, diffs: &mut Vec<DiffEntry>) {
+/// JSON Pointer paths also address keys containing dots, brackets, slashes or tildes.
+fn child_pointer(path: &str, key: &str) -> String {
+    format!("{}/{}", path, key.replace('~', "~0").replace('/', "~1"))
+}
 
-    let path_string: String = path.to_string();
-
+/// Recursively collect differences, with array removals in descending index order.
+fn collect_diffs(
+    path: &str,
+    old_val: &serde_json::Value,
+    new_val: &serde_json::Value,
+    diffs: &mut Vec<DiffEntry>,
+) {
+    use serde_json::Value;
     match (old_val, new_val) {
-        (serde_json::Value::Object(old_map), serde_json::Value::Object(new_map)) => {
-            // Check for added keys
-            for (key, new_v) in new_map {
-                let new_path: String = if path_string.is_empty() {
-                    (*key).clone()
+        (Value::Object(old_map), Value::Object(new_map)) => {
+            for (key, new_value) in new_map {
+                let path = child_pointer(path, key);
+                if let Some(old_value) = old_map.get(key) {
+                    collect_diffs(&path, old_value, new_value, diffs);
                 } else {
-                    format!("{}.{}", path_string, key)
-                };
-                if !old_map.contains_key(key) {
-                    let val_to_add: serde_json::Value = (*new_v).clone();
-                    diffs.push(DiffEntry::Added { path: new_path, value: val_to_add });
+                    diffs.push(DiffEntry::Added {
+                        path,
+                        value: new_value.clone(),
+                    });
                 }
             }
-            // Check for removed keys
-            for (key, old_v) in old_map {
-                let new_path: String = if path_string.is_empty() {
-                    (*key).clone()
-                } else {
-                    format!("{}.{}", path_string, key)
-                };
+            for (key, old_value) in old_map {
                 if !new_map.contains_key(key) {
-                    let val_to_remove: serde_json::Value = (*old_v).clone();
-                    diffs.push(DiffEntry::Removed { path: new_path, value: val_to_remove });
-                }
-            }
-            // Check for modified keys (recurse)
-            for (key, old_v) in old_map {
-                if let Some(new_v) = new_map.get(key) {
-                    let new_path: String = if path_string.is_empty() {
-                        (*key).clone()
-                    } else {
-                        format!("{}.{}", path_string, key)
-                    };
-                    collect_diffs(&new_path, old_v, new_v, diffs);
+                    diffs.push(DiffEntry::Removed {
+                        path: child_pointer(path, key),
+                        value: old_value.clone(),
+                    });
                 }
             }
         }
-        (serde_json::Value::Array(old_arr), serde_json::Value::Array(new_arr)) => {
-            // For arrays, compare element by element up to min length, then handle rest
+        (Value::Array(old_arr), Value::Array(new_arr)) => {
             let min_len = old_arr.len().min(new_arr.len());
             for i in 0..min_len {
-                let new_path = format!("{}[{}]", path_string, i);
-                collect_diffs(&new_path, &old_arr[i], &new_arr[i], diffs);
+                collect_diffs(
+                    &child_pointer(path, &i.to_string()),
+                    &old_arr[i],
+                    &new_arr[i],
+                    diffs,
+                );
             }
-            // Handle length differences
             for (i, item) in new_arr.iter().enumerate().skip(min_len) {
-                let new_path = format!("{}[{}]", path_string, i);
-                diffs.push(DiffEntry::Added { path: new_path, value: item.clone() });
+                diffs.push(DiffEntry::Added {
+                    path: child_pointer(path, &i.to_string()),
+                    value: item.clone(),
+                });
             }
-            for (i, item) in old_arr.iter().enumerate().skip(min_len) {
-                let new_path = format!("{}[{}]", path_string, i);
-                diffs.push(DiffEntry::Removed { path: new_path, value: item.clone() });
-            }
-        }
-        _ => {
-            // Primitive values - check if different
-            if old_val != new_val {
-                diffs.push(DiffEntry::Modified {
-                    path: path.to_string(),
-                    old_value: old_val.clone(),
-                    new_value: new_val.clone(),
+            for (i, item) in old_arr.iter().enumerate().skip(min_len).rev() {
+                diffs.push(DiffEntry::Removed {
+                    path: child_pointer(path, &i.to_string()),
+                    value: item.clone(),
                 });
             }
         }
+        _ if old_val != new_val => diffs.push(DiffEntry::Modified {
+            path: path.to_string(),
+            old_value: old_val.clone(),
+            new_value: new_val.clone(),
+        }),
+        _ => {}
     }
 }
 
-/// Apply a single diff entry to a JSON value
-fn apply_diff(value: &mut serde_json::Value, diff: &DiffEntry) {
-    // Helper to extract key from path segment (handles array indices like "users[0]")
-    fn extract_key(segment: &str) -> String {
-        let segment = segment.trim();
-        if segment.is_empty() {
-            return String::new();
-        }
-        // Handle array notation: "key[0]" -> "key"
-        if let Some(idx) = segment.find('[') {
-            segment[..idx].to_string()
-        } else {
-            segment.to_string()
-        }
-    }
-
-    // Navigate to nested value using pointer manipulation
-    fn navigate_to<'a>(value: &'a mut serde_json::Value, path: &str) -> Option<&'a mut serde_json::Value> {
-        let parts: Vec<&str> = path.split('.').collect();
-        if parts.is_empty() {
-            return None;
-        }
-        if parts.len() == 1 {
-            return Some(value);
-        }
-
-        // For nested paths, we need to traverse using indices
-        let mut current = value as *mut serde_json::Value;
-        for part in &parts[..parts.len()-1] {
-            let key = extract_key(part);
-            if key.is_empty() {
-                return None;
-            }
-            // SAFETY: We have exclusive ownership through the pointer and only use it
-            // within this function's lifetime. The parent reference ensures the chain is valid.
-            unsafe {
-                if let serde_json::Value::Object(m) = &mut *current {
-                    if let Some(next) = m.get_mut(&key) {
-                        current = next as *mut serde_json::Value;
-                    } else {
-                        return None;
-                    }
-                } else {
-                    return None;
-                }
-            }
-        }
-        // SAFETY: Same reasoning as above
-        unsafe {
-            Some(&mut *current)
-        }
-    }
-
-    match diff {
-        DiffEntry::Added { path, value: new_val } => {
-            let parts: Vec<&str> = path.split('.').collect();
-            if parts.is_empty() {
-                return;
-            }
-
-            let final_key = extract_key(parts[parts.len()-1]);
-            if final_key.is_empty() {
-                return;
-            }
-
-            if parts.len() == 1 {
-                if let serde_json::Value::Object(m) = value {
-                    m.insert(final_key, new_val.clone());
-                }
-            } else {
-                let parent_path = parts[..parts.len()-1].join(".");
-                if let Some(parent) = navigate_to(value, &parent_path)
-                    && let serde_json::Value::Object(m) = parent {
-                        m.insert(final_key, new_val.clone());
-                    }
-            }
-        }
-        DiffEntry::Removed { path, .. } => {
-            let parts: Vec<&str> = path.split('.').collect();
-            if parts.is_empty() {
-                return;
-            }
-
-            let final_key = extract_key(parts[parts.len()-1]);
-            if final_key.is_empty() {
-                return;
-            }
-
-            if parts.len() == 1 {
-                if let serde_json::Value::Object(m) = value {
-                    m.remove(&final_key);
-                }
-            } else {
-                let parent_path = parts[..parts.len()-1].join(".");
-                if let Some(parent) = navigate_to(value, &parent_path)
-                    && let serde_json::Value::Object(m) = parent {
-                        m.remove(&final_key);
-                    }
-            }
-        }
-        DiffEntry::Modified { path, new_value, .. } => {
-            let parts: Vec<&str> = path.split('.').collect();
-            if parts.is_empty() {
-                return;
-            }
-
-            let final_key = extract_key(parts[parts.len()-1]);
-            if final_key.is_empty() {
-                return;
-            }
-
-            if parts.len() == 1 {
-                if let serde_json::Value::Object(m) = value {
-                    m.insert(final_key, new_value.clone());
-                }
-            } else {
-                let parent_path = parts[..parts.len()-1].join(".");
-                if let Some(parent) = navigate_to(value, &parent_path)
-                    && let serde_json::Value::Object(m) = parent {
-                        m.insert(final_key, new_value.clone());
-                    }
-            }
-        }
-    }
-}
-
-pub fn diff(paths: &Paths) -> Result<()> {
-    use std::io::Write;
+/// Apply one difference without inventing missing parents or silently ignoring errors.
+fn apply_diff(value: &mut serde_json::Value, diff: &DiffEntry) -> Result<()> {
     use serde_json::Value;
-
-    // Load configs as JSON Values
-    let current_json: Value = if paths.config.exists() {
-        serde_json::from_str(&fs::read_to_string(&paths.config)?)?
-    } else {
-        serde_json::json!({})
+    let path = match diff {
+        DiffEntry::Added { path, .. }
+        | DiffEntry::Removed { path, .. }
+        | DiffEntry::Modified { path, .. } => path,
     };
-
-    let default_json: Value = if paths.default_config.exists() {
-        serde_json::from_str(&fs::read_to_string(&paths.default_config)?)?
-    } else {
-        serde_json::json!({})
-    };
-
-    // Collect all differences
-    let mut diffs = Vec::new();
-    collect_diffs("", &current_json, &default_json, &mut diffs);
-
-    if diffs.is_empty() {
-        eprintln!("{} No differences found between current and default config.", "[INFO]".green());
-        return Ok(());
+    if path.is_empty() {
+        return match diff {
+            DiffEntry::Modified {
+                old_value,
+                new_value,
+                ..
+            } if value == old_value => {
+                *value = new_value.clone();
+                Ok(())
+            }
+            _ => Err(anyhow!(
+                "Configuration root does not match the selected change"
+            )),
+        };
     }
+    let (parent_path, token) = path
+        .rsplit_once('/')
+        .context("Invalid configuration change path")?;
+    let key = token.replace("~1", "/").replace("~0", "~");
+    let parent = value
+        .pointer_mut(parent_path)
+        .with_context(|| format!("Configuration change parent no longer exists: {}", path))?;
+    match parent {
+        Value::Object(object) => match diff {
+            DiffEntry::Added { value, .. } if !object.contains_key(&key) => {
+                object.insert(key, value.clone());
+            }
+            DiffEntry::Removed { value, .. } if object.get(&key) == Some(value) => {
+                object.remove(&key);
+            }
+            DiffEntry::Modified {
+                old_value,
+                new_value,
+                ..
+            } if object.get(&key) == Some(old_value) => {
+                object.insert(key, new_value.clone());
+            }
+            _ => {
+                return Err(anyhow!(
+                    "Configuration value no longer matches change: {}",
+                    path
+                ));
+            }
+        },
+        Value::Array(array) => {
+            let index: usize = key.parse().with_context(|| {
+                format!("Invalid array index in configuration change: {}", path)
+            })?;
+            match diff {
+                // Collected additions are tail items. Append only the selected items,
+                // including when an earlier proposed addition was declined.
+                DiffEntry::Added { value, .. } if index >= array.len() => array.push(value.clone()),
+                DiffEntry::Removed { value, .. } if array.get(index) == Some(value) => {
+                    array.remove(index);
+                }
+                DiffEntry::Modified {
+                    old_value,
+                    new_value,
+                    ..
+                } if array.get(index) == Some(old_value) => {
+                    array[index] = new_value.clone();
+                }
+                _ => {
+                    return Err(anyhow!(
+                        "Configuration array no longer matches change: {}",
+                        path
+                    ));
+                }
+            }
+        }
+        _ => {
+            return Err(anyhow!(
+                "Configuration change parent is not a container: {}",
+                path
+            ));
+        }
+    }
+    Ok(())
+}
 
-    eprintln!("{} Found {} difference(s) between current and default config:", "[INFO]".green(), diffs.len());
-    eprintln!();
-
-    let mut to_apply = Vec::new();
-
+fn select_diffs(
+    diffs: &[DiffEntry],
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+) -> Result<Option<Vec<DiffEntry>>> {
+    let mut selected = Vec::new();
     for (i, diff) in diffs.iter().enumerate() {
         match diff {
             DiffEntry::Added { path, value } => {
-                println!("{}. [ADDED] {}", i + 1, path);
-                println!("    Value: {}", serde_json::to_string_pretty(value).unwrap_or_default());
+                writeln!(output, "{}. [ADDED] {}", i + 1, path)?;
+                writeln!(
+                    output,
+                    "    Value: {}",
+                    serde_json::to_string_pretty(value)?
+                )?;
             }
             DiffEntry::Removed { path, value } => {
-                println!("{}. [REMOVED] {}", i + 1, path);
-                println!("    Value: {}", serde_json::to_string_pretty(value).unwrap_or_default());
+                writeln!(output, "{}. [REMOVED] {}", i + 1, path)?;
+                writeln!(
+                    output,
+                    "    Value: {}",
+                    serde_json::to_string_pretty(value)?
+                )?;
             }
-            DiffEntry::Modified { path, old_value, new_value } => {
-                println!("{}. [MODIFIED] {}", i + 1, path);
-                println!("    Old: {}", serde_json::to_string_pretty(old_value).unwrap_or_default());
-                println!("    New: {}", serde_json::to_string_pretty(new_value).unwrap_or_default());
+            DiffEntry::Modified {
+                path,
+                old_value,
+                new_value,
+            } => {
+                writeln!(output, "{}. [MODIFIED] {}", i + 1, path)?;
+                writeln!(
+                    output,
+                    "    Old: {}",
+                    serde_json::to_string_pretty(old_value)?
+                )?;
+                writeln!(
+                    output,
+                    "    New: {}",
+                    serde_json::to_string_pretty(new_value)?
+                )?;
             }
         }
-        eprintln!();
-
-        // Interactive prompt
         loop {
-            print!("Apply this change? [y/n/a/q] (y=yes, n=no, a=all, q=quit): ");
-            std::io::stdout().flush()?;
-
-            let mut input = String::new();
-            std::io::stdin().read_line(&mut input)?;
-            let input = input.trim().to_lowercase();
-
-            match input.as_str() {
+            write!(
+                output,
+                "Apply this change? [y/n/a/q] (y=yes, n=no, a=all, q=quit): "
+            )?;
+            output.flush()?;
+            let mut reply = String::new();
+            if input.read_line(&mut reply)? == 0 {
+                writeln!(output, "\nInput ended. No changes applied.")?;
+                return Ok(None);
+            }
+            match reply.trim().to_ascii_lowercase().as_str() {
                 "y" | "yes" => {
-                    to_apply.push(diff.clone());
+                    selected.push(diff.clone());
                     break;
                 }
-                "n" | "no" => {
-                    break;
-                }
+                "n" | "no" => break,
                 "a" | "all" => {
-                    // Apply all remaining diffs without asking
-                    for d in diffs[i..].iter().cloned() {
-                        to_apply.push(d);
-                    }
-                    eprintln!("{} Applying all remaining changes...", "[INFO]".green());
-                    break;
+                    selected.extend_from_slice(&diffs[i..]);
+                    writeln!(output, "Applying all remaining changes...")?;
+                    return Ok(Some(selected));
                 }
                 "q" | "quit" => {
-                    eprintln!("{} Quitting. No changes applied.", "[WARN]".yellow());
-                    return Ok(());
+                    writeln!(output, "Quitting. No changes applied.")?;
+                    return Ok(None);
                 }
-                _ => {
-                    eprintln!("{} Invalid input. Please enter y, n, a, or q.", "[WARN]".yellow());
-                }
+                _ => writeln!(output, "Invalid input. Please enter y, n, a, or q.")?,
             }
         }
     }
+    Ok(Some(selected))
+}
 
+pub fn diff(paths: &Paths) -> Result<()> {
+    use serde_json::Value;
+    // Keep earlier staged edits when selecting additional changes.
+    let input_path = paths.get_input_config_path();
+    let current_json: Value = if input_path.exists() {
+        serde_json::from_str(&fs::read_to_string(input_path)?)?
+    } else {
+        serde_json::json!({})
+    };
+    // A missing template is an error, not a request to delete the whole config.
+    let default_json: Value =
+        serde_json::from_str(&fs::read_to_string(&paths.default_config).with_context(|| {
+            format!(
+                "Cannot read default configuration {:?}",
+                paths.default_config
+            )
+        })?)?;
+    let mut diffs = Vec::new();
+    collect_diffs("", &current_json, &default_json, &mut diffs);
+    if diffs.is_empty() {
+        eprintln!(
+            "{} No differences found between current and default config.",
+            "[INFO]".green()
+        );
+        return Ok(());
+    }
+    eprintln!(
+        "{} Found {} difference(s) between current and default config:",
+        "[INFO]".green(),
+        diffs.len()
+    );
+    let Some(to_apply) = select_diffs(
+        &diffs,
+        &mut std::io::stdin().lock(),
+        &mut std::io::stdout().lock(),
+    )?
+    else {
+        return Ok(());
+    };
     if to_apply.is_empty() {
         eprintln!("{} No changes selected to apply.", "[INFO]".green());
         return Ok(());
     }
-
-    // Apply selected diffs to a copy of current config
-    let mut new_config = current_json.clone();
+    let mut new_config = current_json;
     for diff in &to_apply {
-        apply_diff(&mut new_config, diff);
+        apply_diff(&mut new_config, diff)?;
     }
-
-    // Save to staging
     save_config(&paths.staging, &serde_json::from_value(new_config)?)?;
-
-    eprintln!("{} Applied {} change(s) to staging. Run 'mimictl apply' to activate.", "[INFO]".green(), to_apply.len());
-
+    eprintln!(
+        "{} Applied {} change(s) to staging. Run 'mimictl apply' to activate.",
+        "[INFO]".green(),
+        to_apply.len()
+    );
     Ok(())
 }
 
@@ -507,7 +519,8 @@ pub fn check(paths: &Paths) -> Result<()> {
     let sing_box = std::env::var("SING_BOX_BIN").unwrap_or_else(|_| "sing-box".to_string());
     eprintln!("{} Running '{} check'...", "[INFO]".green(), sing_box);
     let status = Command::new(&sing_box)
-        .args(["check", "-c", input_path.to_str().unwrap()])
+        .args(["check", "-c"])
+        .arg(input_path)
         .status();
 
     match status {
@@ -563,6 +576,291 @@ mod tests {
             staging_pubkey: etc_singbox.join("PUBKEY.new"),
             sni_list: usr_share.join("sni.txt"),
             default_config: usr_share.join("default/config.json"),
+        }
+    }
+
+    #[test]
+    fn test_diff_changes_only_selected_nested_array_field() {
+        let mut current = serde_json::json!({
+            "log": {"level": "warn"},
+            "inbounds": [{"tls": {"server_name": "old.example", "reality": {"private_key": "keep"}}}]
+        });
+        let mut default = current.clone();
+        default["inbounds"][0]["tls"]["server_name"] = serde_json::json!("new.example");
+        default["log"]["level"] = serde_json::json!("info");
+        let mut diffs = Vec::new();
+        collect_diffs("", &current, &default, &mut diffs);
+        let selected = diffs
+            .iter()
+            .find(|diff| {
+                matches!(diff,
+                    DiffEntry::Modified { path, .. } if path == "/inbounds/0/tls/server_name"
+                )
+            })
+            .unwrap();
+        apply_diff(&mut current, selected).unwrap();
+        assert_eq!(current["inbounds"][0]["tls"]["server_name"], "new.example");
+        assert_eq!(
+            current["inbounds"][0]["tls"]["reality"]["private_key"],
+            "keep"
+        );
+        assert_eq!(current["log"]["level"], "warn");
+        assert!(current.get("server_name").is_none());
+    }
+
+    #[test]
+    fn test_all_diffs_reproduce_nested_object_and_array_changes() {
+        let mut current = serde_json::json!({
+            "removed": true,
+            "inbounds": [{"users": [{"name": "old"}, {"name": "remove"}, {"name": "remove2"}]}],
+            "route": {"rules": []}
+        });
+        let default = serde_json::json!({
+            "added": {"enabled": true},
+            "inbounds": [{"users": [{"name": "new", "flow": "vision"}]}],
+            "route": {"rules": [{"action": "sniff"}, {"action": "route"}]}
+        });
+        let mut diffs = Vec::new();
+        collect_diffs("", &current, &default, &mut diffs);
+        for diff in &diffs {
+            apply_diff(&mut current, diff).unwrap();
+        }
+        assert_eq!(current, default);
+    }
+
+    #[test]
+    fn test_diff_handles_keys_that_need_json_pointer_escaping() {
+        let mut current = serde_json::json!({"a/b": {"~key.with[brackets]": [1, 2]}});
+        let default = serde_json::json!({"a/b": {"~key.with[brackets]": [3]}});
+        let mut diffs = Vec::new();
+        collect_diffs("", &current, &default, &mut diffs);
+        for diff in &diffs {
+            apply_diff(&mut current, diff).unwrap();
+        }
+        assert_eq!(current, default);
+    }
+
+    #[test]
+    fn test_selected_array_additions_do_not_require_declined_items() {
+        let mut current = serde_json::json!({"rules": ["keep"]});
+        let default = serde_json::json!({"rules": ["keep", "decline", "accept"]});
+        let mut diffs = Vec::new();
+        collect_diffs("", &current, &default, &mut diffs);
+        apply_diff(&mut current, &diffs[1]).unwrap();
+        assert_eq!(current, serde_json::json!({"rules": ["keep", "accept"]}));
+    }
+
+    #[test]
+    fn test_diff_rejects_stale_values_without_modifying_config() {
+        let mut current = serde_json::json!({"nested": {"value": "keep"}});
+        let original = current.clone();
+        let stale = DiffEntry::Modified {
+            path: "/nested/value".into(),
+            old_value: serde_json::json!("wrong"),
+            new_value: serde_json::json!("replace"),
+        };
+        assert!(apply_diff(&mut current, &stale).is_err());
+        assert_eq!(current, original);
+        let missing = DiffEntry::Added {
+            path: "/missing/key".into(),
+            value: serde_json::json!(true),
+        };
+        assert!(apply_diff(&mut current, &missing).is_err());
+        assert_eq!(current, original);
+    }
+
+    #[test]
+    fn test_diff_all_stops_prompting_and_applies_each_change_once() {
+        let current = serde_json::json!({"a": 1, "b": 2, "c": 3});
+        let default = serde_json::json!({"a": 4, "b": 5, "c": 6});
+        let mut diffs = Vec::new();
+        collect_diffs("", &current, &default, &mut diffs);
+        let mut output = Vec::new();
+        let selected = select_diffs(&diffs, &mut &b"y\na\n"[..], &mut output)
+            .unwrap()
+            .unwrap();
+        assert_eq!(selected.len(), diffs.len());
+        assert_eq!(
+            String::from_utf8(output)
+                .unwrap()
+                .matches("Apply this change?")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn test_diff_eof_cancels_pending_selections() {
+        let mut diffs = Vec::new();
+        collect_diffs(
+            "",
+            &serde_json::json!({"a": 1, "b": 2}),
+            &serde_json::json!({"a": 3, "b": 4}),
+            &mut diffs,
+        );
+        let mut output = Vec::new();
+        assert!(
+            select_diffs(&diffs, &mut &b"y\n"[..], &mut output)
+                .unwrap()
+                .is_none()
+        );
+        assert!(String::from_utf8(output).unwrap().contains("Input ended"));
+    }
+
+    #[test]
+    fn test_diff_missing_template_preserves_staging() {
+        let tmp = setup_tmp();
+        let paths = build_paths(tmp.clone());
+        fs::write(&paths.config, "{}").unwrap();
+        fs::write(&paths.staging, "{\"pending\": true}").unwrap();
+        assert!(diff(&paths).is_err());
+        assert_eq!(
+            fs::read_to_string(&paths.staging).unwrap(),
+            "{\"pending\": true}"
+        );
+        fs::remove_dir_all(tmp).unwrap();
+    }
+
+    #[test]
+    fn test_reset_keeps_user_credentials_and_reality_identity() {
+        let tmp = setup_tmp();
+        let paths = build_paths(tmp.clone());
+        let default = serde_json::json!({
+            "log": {"level": "warn"},
+            "inbounds": [{"type": "vless", "tag": "vless-in", "users": [],
+                "tls": {"enabled": true, "reality": {"enabled": true, "private_key": "", "short_id": []}}}],
+            "outbounds": [{"type": "direct"}]
+        });
+        let mut current = default.clone();
+        current["log"]["level"] = serde_json::json!("debug");
+        current["inbounds"][0]["users"] = serde_json::json!([
+            {"name": "alice@example.com:aabb:1", "uuid": "keep-uuid", "flow": "xtls-rprx-vision"},
+            {"name": "bob@example.com:ccdd:1", "uuid": "remove-uuid", "flow": "xtls-rprx-vision"}
+        ]);
+        current["inbounds"][0]["tls"] = serde_json::json!({
+            "enabled": true, "server_name": "keep.example",
+            "reality": {"enabled": true, "private_key": "keep-private-key", "short_id": ["aabb", "ccdd"],
+                "handshake": {"server": "keep.example", "server_port": 8443}}
+        });
+        fs::write(&paths.default_config, default.to_string()).unwrap();
+        fs::write(&paths.config, current.to_string()).unwrap();
+        reset(
+            &paths,
+            vec!["alice@example.com".into(), "alice@example.com".into()],
+        )
+        .unwrap();
+        let staged: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&paths.staging).unwrap()).unwrap();
+        assert_eq!(staged["log"], default["log"]);
+        assert_eq!(
+            staged["inbounds"][0]["users"],
+            serde_json::json!([current["inbounds"][0]["users"][0].clone()])
+        );
+        assert_eq!(
+            staged["inbounds"][0]["tls"]["reality"]["private_key"],
+            "keep-private-key"
+        );
+        assert_eq!(staged["inbounds"][0]["tls"]["server_name"], "keep.example");
+        assert_eq!(
+            staged["inbounds"][0]["tls"]["reality"]["handshake"],
+            current["inbounds"][0]["tls"]["reality"]["handshake"]
+        );
+        assert_eq!(
+            staged["inbounds"][0]["tls"]["reality"]["short_id"],
+            serde_json::json!(["aabb"])
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&paths.config).unwrap())
+                .unwrap(),
+            current
+        );
+        fs::remove_dir_all(tmp).unwrap();
+    }
+
+    #[test]
+    fn test_reset_unknown_kept_user_does_not_overwrite_staging() {
+        let tmp = setup_tmp();
+        let paths = build_paths(tmp.clone());
+        let config = r#"{"inbounds": [{"type": "vless", "users": [], "tls": {"enabled": true, "reality": {"enabled": true}}}]}"#;
+        fs::write(&paths.config, config).unwrap();
+        fs::write(&paths.default_config, config).unwrap();
+        fs::write(&paths.staging, config).unwrap();
+        assert!(reset(&paths, vec!["missing@example.com".into()]).is_err());
+        assert_eq!(fs::read_to_string(&paths.staging).unwrap(), config);
+        fs::remove_dir_all(tmp).unwrap();
+    }
+
+    #[test]
+    fn test_reset_preserves_managed_vless_with_reordered_hysteria_inbounds() {
+        for current_vless_first in [false, true] {
+            let tmp = setup_tmp();
+            let paths = build_paths(tmp.clone());
+            let current_vless = serde_json::json!({
+                "type": "vless", "tag": "vless-in", "users": [
+                    {"name": "alice@example.com:aabb:1", "uuid": "keep-vless-uuid", "flow": "xtls-rprx-vision"}
+                ],
+                "tls": {"enabled": true, "server_name": "keep.example", "reality": {
+                    "enabled": true, "private_key": "keep-vless-key", "short_id": ["aabb"]
+                }}
+            });
+            let current_hysteria = serde_json::json!({
+                "type": "hysteria2", "tag": "hy2-in", "users": [
+                    {"name": "alice@example.com:aabb:1", "password": "current-hy2-password"}
+                ]
+            });
+            let default_vless = serde_json::json!({
+                "type": "vless", "tag": "vless-in", "users": [],
+                "tls": {"enabled": true, "reality": {"enabled": true, "private_key": "", "short_id": []}}
+            });
+            let default_hysteria = serde_json::json!({
+                "type": "hysteria2", "tag": "hy2-in", "users": [
+                    {"name": "default-hy2-user", "password": "default-hy2-password"}
+                ]
+            });
+            let current_inbounds = if current_vless_first {
+                vec![current_vless.clone(), current_hysteria]
+            } else {
+                vec![current_hysteria, current_vless.clone()]
+            };
+            let default_inbounds = if current_vless_first {
+                vec![default_hysteria.clone(), default_vless]
+            } else {
+                vec![default_vless, default_hysteria.clone()]
+            };
+            fs::write(
+                &paths.config,
+                serde_json::json!({"inbounds": current_inbounds}).to_string(),
+            )
+            .unwrap();
+            fs::write(
+                &paths.default_config,
+                serde_json::json!({"inbounds": default_inbounds}).to_string(),
+            )
+            .unwrap();
+            reset(&paths, vec!["alice@example.com".into()]).unwrap();
+            let staged = load_config(&paths.staging).unwrap();
+            let vless_index = usize::from(current_vless_first);
+            let hysteria_index = 1 - vless_index;
+            assert_eq!(
+                staged.inbounds[vless_index].users,
+                current_vless["users"].as_array().unwrap().clone()
+            );
+            assert_eq!(
+                staged.inbounds[vless_index]
+                    .tls
+                    .as_ref()
+                    .unwrap()
+                    .reality
+                    .as_ref()
+                    .unwrap()
+                    .private_key,
+                "keep-vless-key"
+            );
+            assert_eq!(
+                staged.inbounds[hysteria_index].users,
+                default_hysteria["users"].as_array().unwrap().clone()
+            );
+            fs::remove_dir_all(tmp).unwrap();
         }
     }
 

@@ -1,0 +1,77 @@
+name: Build and publish AUR package (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Package recipe
+        type: choice
+        options: [mimic-node, mimic-node-git]
+        default: mimic-node
+      publish:
+        description: Push build files to AUR (requires ownership and dedicated SSH secrets)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aur-${{ inputs.package }}
+  cancel-in-progress: false
+
+jobs:
+  aur:
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    timeout-minutes: 30
+    env:
+      AUR_PACKAGE: ${{ inputs.package }}
+    steps:
+      - name: Install build and packaging dependencies
+        run: pacman -Syu --noconfirm --needed rust git openssl sing-box python namcap openssh
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Build and test selected package
+        run: |
+          case "$AUR_PACKAGE" in mimic-node|mimic-node-git) ;; *) exit 2 ;; esac
+          useradd --create-home builder
+          mkdir -p aur-build
+          cp "packaging/aur/$AUR_PACKAGE/"* aur-build/
+          chown -R builder:builder aur-build
+          su builder -c "cd '$GITHUB_WORKSPACE/aur-build' && makepkg --cleanbuild --noconfirm && makepkg --printsrcinfo > .SRCINFO"
+          namcap aur-build/PKGBUILD aur-build/*.pkg.tar.zst
+          tar -C aur-build -czf aur-build-files.tar.gz PKGBUILD .SRCINFO mimic-node.install
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ inputs.package }}
+          path: |
+            aur-build-files.tar.gz
+            aur-build/*.pkg.tar.zst
+          retention-days: 14
+      - name: Push verified build files to AUR
+        if: inputs.publish
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          AUR_KNOWN_HOSTS: ${{ secrets.AUR_KNOWN_HOSTS }}
+        run: |
+          test -n "$AUR_SSH_PRIVATE_KEY" || { echo 'Configure a dedicated AUR_SSH_PRIVATE_KEY secret first'; exit 1; }
+          test -n "$AUR_KNOWN_HOSTS" || { echo 'Configure verified AUR_KNOWN_HOSTS first'; exit 1; }
+          key_dir=$(mktemp -d)
+          trap 'rm -rf "$key_dir"' EXIT
+          chmod 700 "$key_dir"
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$key_dir/key"
+          printf '%s\n' "$AUR_KNOWN_HOSTS" > "$key_dir/known_hosts"
+          chmod 600 "$key_dir/key" "$key_dir/known_hosts"
+          unset AUR_SSH_PRIVATE_KEY AUR_KNOWN_HOSTS
+          export GIT_SSH_COMMAND="ssh -i $key_dir/key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$key_dir/known_hosts"
+          git clone "ssh://aur@aur.archlinux.org/$AUR_PACKAGE.git" aur-publish
+          cp aur-build/PKGBUILD aur-build/.SRCINFO aur-build/mimic-node.install aur-publish/
+          cd aur-publish
+          git config user.name 'Mimic-Node release bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add PKGBUILD .SRCINFO mimic-node.install
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Update $AUR_PACKAGE from $GITHUB_SHA"
+          git push origin HEAD:master

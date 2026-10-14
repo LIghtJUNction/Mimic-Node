@@ -7,16 +7,21 @@ use std::process::Command;
 use crate::paths::Paths;
 
 pub fn run(paths: &Paths, verbose: bool) -> Result<()> {
-    println!(r#"
+    println!(
+        r#"
   ███╗   ███╗██╗██████╗ ███████╗██╗    ██╗ █████╗ ██╗   ██╗
   ████╗ ████║██║██╔══██╗██╔════╝██║    ██║██╔══██╗╚██╗ ██╔╝
   ██╔████╔██║██║██████╔╝█████╗  ██║ █╗ ██║███████║ ╚████╔╝
   ██║╚██╔╝██║██║██╔═══╝ ██╔══╝ ██║███╗██║██╔══██║  ╚██╔╝
   ██║ ╚═╝ ██║██║██║     ███████╗╚███╔███╔╝██║  ██║   ██║
   ╚═╝     ╚═╝╚═╝╚═╝     ╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝
-"#);
+"#
+    );
 
-    println!("{} System Health Check\n", "  Mimic-Node Diagnostic".cyan().bold());
+    println!(
+        "{} System Health Check\n",
+        "  Mimic-Node Diagnostic".cyan().bold()
+    );
     println!("  ───────────────────────────────────────\n");
 
     let mut warnings = 0;
@@ -128,8 +133,15 @@ fn check_overlay_mount(paths: &Paths, verbose: bool) -> bool {
             true
         } else {
             if verbose {
-                println!("      {} OverlayFS not mounted at {}", "[!]".yellow(), mount_target);
-                println!("      {} Run: sudo systemctl start mimic-node-mount", "[>]".cyan());
+                println!(
+                    "      {} OverlayFS not mounted at {}",
+                    "[!]".yellow(),
+                    mount_target
+                );
+                println!(
+                    "      {} Run: sudo systemctl start mimic-node-mount",
+                    "[>]".cyan()
+                );
             }
             false
         }
@@ -146,24 +158,25 @@ fn check_config_exists(paths: &Paths, verbose: bool) -> bool {
     let default_exists = paths.default_config.exists();
 
     if config_exists && default_exists {
-        if verbose
-            && let Some(p) = paths.get_input_config_path().to_str() {
-                println!("      {} Config: {}", "[*]".cyan(), p);
-            }
+        if verbose && let Some(p) = paths.get_input_config_path().to_str() {
+            println!("      {} Config: {}", "[*]".cyan(), p);
+        }
         true
     } else {
         if verbose {
             println!("      {} Config exists: {}", "[!]".red(), config_exists);
-            println!("      {} Default config exists: {}", "[!]".red(), default_exists);
+            println!(
+                "      {} Default config exists: {}",
+                "[!]".red(),
+                default_exists
+            );
         }
         false
     }
 }
 
 fn check_sing_box_installed(verbose: bool) -> bool {
-    let output = Command::new("sing-box")
-        .args(["version"])
-        .output();
+    let output = Command::new("sing-box").args(["version"]).output();
 
     match output {
         Ok(o) if o.status.success() => {
@@ -185,16 +198,14 @@ fn check_sing_box_installed(verbose: bool) -> bool {
 
 fn check_port_listening(port: u16, verbose: bool) -> bool {
     print!("checking port {}...", port);
-    let output = Command::new("ss")
-        .args(["-tlnp"])
-        .output();
+    let output = Command::new("ss").args(["-tlnp"]).output();
 
     match output {
         Ok(o) => {
             let listening = String::from_utf8_lossy(&o.stdout);
-            let found = listening.lines().any(|line| {
-                line.contains(&format!(":{}", port)) && line.contains("LISTEN")
-            });
+            let found = listening
+                .lines()
+                .any(|line| line.contains(&format!(":{}", port)) && line.contains("LISTEN"));
 
             if found {
                 println!("{}", "[OK]".green());
@@ -210,9 +221,7 @@ fn check_port_listening(port: u16, verbose: bool) -> bool {
         _ => {
             // Try netstat as fallback
             print!("  (trying netstat) ");
-            let output = Command::new("netstat")
-                .args(["-tlnp"])
-                .output();
+            let output = Command::new("netstat").args(["-tlnp"]).output();
 
             match output {
                 Ok(o) => {
@@ -242,9 +251,7 @@ fn check_firewall_rules(verbose: bool) -> bool {
     print!("  Checking firewall rules... ");
 
     // Check iptables for sing-box rules
-    let output = Command::new("iptables")
-        .args(["-L", "-n"])
-        .output();
+    let output = Command::new("iptables").args(["-L", "-n"]).output();
 
     match output {
         Ok(o) if o.status.success() => {
@@ -259,7 +266,10 @@ fn check_firewall_rules(verbose: bool) -> bool {
             } else {
                 println!("{}", "[INFO]".cyan());
                 if verbose {
-                    println!("      {} No sing-box specific rules (may be using auto_redirect)", "[*]".cyan());
+                    println!(
+                        "      {} No sing-box specific rules (may be using auto_redirect)",
+                        "[*]".cyan()
+                    );
                 }
             }
             true
@@ -267,7 +277,10 @@ fn check_firewall_rules(verbose: bool) -> bool {
         _ => {
             println!("{}", "[SKIP]".dimmed());
             if verbose {
-                println!("      {} Cannot read iptables (may need root)", "[*]".cyan());
+                println!(
+                    "      {} Cannot read iptables (may need root)",
+                    "[*]".cyan()
+                );
             }
             true // Not critical
         }
@@ -288,20 +301,24 @@ fn check_tls_certificate(paths: &Paths, verbose: bool) -> bool {
                     if let Some(tls) = inbound.get("tls") {
                         if let Some(cert) = tls.get("cert_path").or(tls.get("certificate_path"))
                             && let Some(path) = cert.as_str()
-                                && !path.is_empty() && path != "/path/to/cert.crt" {
-                                    cert_found = true;
-                                    if verbose {
-                                        println!("\n      {} Cert: {}", "[*]".cyan(), path);
-                                    }
-                                }
+                            && !path.is_empty()
+                            && path != "/path/to/cert.crt"
+                        {
+                            cert_found = true;
+                            if verbose {
+                                println!("\n      {} Cert: {}", "[*]".cyan(), path);
+                            }
+                        }
                         if let Some(key) = tls.get("key_path").or(tls.get("private_key_path"))
                             && let Some(path) = key.as_str()
-                                && !path.is_empty() && path != "/path/to/cert.key" {
-                                    key_found = true;
-                                    if verbose {
-                                        println!("      {} Key: {}", "[*]".cyan(), path);
-                                    }
-                                }
+                            && !path.is_empty()
+                            && path != "/path/to/cert.key"
+                        {
+                            key_found = true;
+                            if verbose {
+                                println!("      {} Key: {}", "[*]".cyan(), path);
+                            }
+                        }
                     }
                 }
             }
@@ -312,7 +329,10 @@ fn check_tls_certificate(paths: &Paths, verbose: bool) -> bool {
             } else if !cert_found {
                 println!("{}", "[WARN]".yellow());
                 if verbose {
-                    println!("\n      {} TLS certificates not configured or using defaults", "[!]".yellow());
+                    println!(
+                        "\n      {} TLS certificates not configured or using defaults",
+                        "[!]".yellow()
+                    );
                 }
                 false
             } else {
@@ -343,20 +363,21 @@ fn check_reality_keys(paths: &Paths, verbose: bool) -> bool {
                 for inbound in inbounds {
                     if inbound.get("type") == Some(&serde_json::Value::String("vless".to_string()))
                         && let Some(tls) = inbound.get("tls")
-                            && let Some(reality) = tls.get("reality")
-                                && let Some(pk) = reality.get("private_key")
-                                    && let Some(key) = pk.as_str()
-                                        && !key.is_empty() {
-                                            has_private_key = true;
-                                            if verbose {
-                                                let masked = if key.len() > 8 {
-                                                    format!("{}...{}", &key[..4], &key[key.len()-4..])
-                                                } else {
-                                                    "****".to_string()
-                                                };
-                                                println!("\n      {} Private key: {}", "[*]".cyan(), masked);
-                                            }
-                                        }
+                        && let Some(reality) = tls.get("reality")
+                        && let Some(pk) = reality.get("private_key")
+                        && let Some(key) = pk.as_str()
+                        && !key.is_empty()
+                    {
+                        has_private_key = true;
+                        if verbose {
+                            let masked = if key.len() > 8 {
+                                format!("{}...{}", &key[..4], &key[key.len() - 4..])
+                            } else {
+                                "****".to_string()
+                            };
+                            println!("\n      {} Private key: {}", "[*]".cyan(), masked);
+                        }
+                    }
                 }
             }
 
@@ -366,7 +387,10 @@ fn check_reality_keys(paths: &Paths, verbose: bool) -> bool {
             } else {
                 println!("{}", "[WARN]".yellow());
                 if verbose {
-                    println!("\n      {} Reality private key not configured", "[!]".yellow());
+                    println!(
+                        "\n      {} Reality private key not configured",
+                        "[!]".yellow()
+                    );
                     println!("      {} Run: mimictl gen-keys", "[>]".cyan());
                 }
                 false
@@ -386,32 +410,36 @@ fn check_dns_configuration(paths: &Paths, verbose: bool) -> bool {
 
     if let Ok(config_str) = fs::read_to_string(paths.get_input_config_path())
         && let Ok(config) = serde_json::from_str::<serde_json::Value>(&config_str)
-            && let Some(dns) = config.get("dns")
-                && let Some(servers) = dns.get("servers").and_then(|s| s.as_array()) {
-                    let server_types: Vec<_> = servers
-                        .iter()
-                        .filter_map(|s| s.get("type").and_then(|t| t.as_str()))
-                        .collect();
+        && let Some(dns) = config.get("dns")
+        && let Some(servers) = dns.get("servers").and_then(|s| s.as_array())
+    {
+        let server_types: Vec<_> = servers
+            .iter()
+            .filter_map(|s| s.get("type").and_then(|t| t.as_str()))
+            .collect();
 
-                    if verbose {
-                        println!("\n      {} DNS servers: {:?}", "[*]".cyan(), server_types);
-                    }
+        if verbose {
+            println!("\n      {} DNS servers: {:?}", "[*]".cyan(), server_types);
+        }
 
-                    let has_encrypted = server_types.iter().any(|t| {
-                        matches!(*t, "tls" | "h3" | "https" | "dnsjson" | "dnsseg")
-                    });
+        let has_encrypted = server_types
+            .iter()
+            .any(|t| matches!(*t, "tls" | "h3" | "https" | "dnsjson" | "dnsseg"));
 
-                    if has_encrypted {
-                        println!("{}", "[OK]".green());
-                        return true;
-                    } else {
-                        println!("{}", "[WARN]".yellow());
-                        if verbose {
-                            println!("      {} No encrypted DNS (consider adding DoH3)", "[!]".yellow());
-                        }
-                        return false;
-                    }
-                }
+        if has_encrypted {
+            println!("{}", "[OK]".green());
+            return true;
+        } else {
+            println!("{}", "[WARN]".yellow());
+            if verbose {
+                println!(
+                    "      {} No encrypted DNS (consider adding DoH3)",
+                    "[!]".yellow()
+                );
+            }
+            return false;
+        }
+    }
 
     println!("{}", "[SKIP]".dimmed());
     true
@@ -424,16 +452,17 @@ fn check_permission_settings(paths: &Paths, verbose: bool) -> bool {
 
     if config_path.is_empty() || config_path == "/etc/sing-box/config.json" {
         // Check if running as root or proper user
-        let output = Command::new("id")
-            .args(["-u"])
-            .output();
+        let output = Command::new("id").args(["-u"]).output();
 
         if let Ok(o) = output {
             let uid = String::from_utf8_lossy(&o.stdout);
             if uid.trim() == "0" {
                 println!("{}", "[WARN]".yellow());
                 if verbose {
-                    println!("\n      {} Running as root is not recommended", "[!]".yellow());
+                    println!(
+                        "\n      {} Running as root is not recommended",
+                        "[!]".yellow()
+                    );
                 }
                 return false;
             }
@@ -444,41 +473,11 @@ fn check_permission_settings(paths: &Paths, verbose: bool) -> bool {
     true
 }
 
-fn check_recent_commits(verbose: bool) -> bool {
-    if !verbose {
-        return true;
-    }
-
-    print!("  Checking recent git commits... ");
-
-    let output = Command::new("git")
-        .args(["log", "--oneline", "-5"])
-        .output();
-
-    match output {
-        Ok(o) if o.status.success() => {
-            let commits = String::from_utf8_lossy(&o.stdout);
-            println!("{}", "[OK]".green());
-            println!("\n      {} Recent commits:", "[*]".cyan());
-            for line in commits.lines().take(5) {
-                println!("      {} {}", "[>]".dimmed(), line);
-            }
-            true
-        }
-        _ => {
-            println!("{}", "[SKIP]".dimmed());
-            true
-        }
-    }
-}
-
 fn check_kernel_tls_support(verbose: bool) -> bool {
     print!("  Checking kernel TLS support... ");
 
     // Check Linux kernel version for kTLS support (5.1+)
-    let output = Command::new("uname")
-        .args(["-r"])
-        .output();
+    let output = Command::new("uname").args(["-r"]).output();
 
     match output {
         Ok(o) => {
@@ -494,7 +493,11 @@ fn check_kernel_tls_support(verbose: bool) -> bool {
                 if major > 5 || (major == 5 && minor >= 1) {
                     println!("{}", "[OK]".green());
                     if verbose {
-                        println!("\n      {} Kernel {} supports kTLS", "[*]".cyan(), version_str);
+                        println!(
+                            "\n      {} Kernel {} supports kTLS",
+                            "[*]".cyan(),
+                            version_str
+                        );
                     }
                     return true;
                 }
@@ -502,7 +505,11 @@ fn check_kernel_tls_support(verbose: bool) -> bool {
 
             println!("{}", "[INFO]".cyan());
             if verbose {
-                println!("\n      {} Kernel {} may not support kTLS (need 5.1+)", "[*]".cyan(), version_str);
+                println!(
+                    "\n      {} Kernel {} may not support kTLS (need 5.1+)",
+                    "[*]".cyan(),
+                    version_str
+                );
             }
             true // Not critical
         }
@@ -534,8 +541,14 @@ fn check_bbr_enabled(verbose: bool) -> bool {
             } else {
                 println!("{}", "[INFO]".cyan());
                 if verbose {
-                    println!("\n      {} BBR not enabled (consider enabling for better performance)", "[*]".cyan());
-                    println!("      {} Run: sudo sysctl -w net.ipv4.tcp_congestion_control=bbr", "[>]".cyan());
+                    println!(
+                        "\n      {} BBR not enabled (consider enabling for better performance)",
+                        "[*]".cyan()
+                    );
+                    println!(
+                        "      {} Run: sudo sysctl -w net.ipv4.tcp_congestion_control=bbr",
+                        "[>]".cyan()
+                    );
                 }
                 true // Not critical
             }
@@ -568,19 +581,24 @@ fn check_protocol_sniffing(paths: &Paths, verbose: bool) -> bool {
             ];
 
             if let Some(route) = config.get("route")
-                && let Some(rules) = route.get("rules").and_then(|r| r.as_array()) {
-                    for rule in rules {
-                        if rule.get("action") == Some(&serde_json::Value::String("sniff".to_string())) {
-                            sniff_rules_count += 1;
-                            sniffing_enabled = true;
-                        }
+                && let Some(rules) = route.get("rules").and_then(|r| r.as_array())
+            {
+                for rule in rules {
+                    if rule.get("action") == Some(&serde_json::Value::String("sniff".to_string())) {
+                        sniff_rules_count += 1;
+                        sniffing_enabled = true;
                     }
                 }
+            }
 
             if sniffing_enabled {
                 println!("{}", "[OK]".green());
                 if verbose {
-                    println!("      {} Protocol sniffing: {} rules configured", "[*]".cyan(), sniff_rules_count);
+                    println!(
+                        "      {} Protocol sniffing: {} rules configured",
+                        "[*]".cyan(),
+                        sniff_rules_count
+                    );
                     println!("      {} Supported protocols:", "[*]".cyan());
                     for proto in supported_protocols.iter().take(6) {
                         println!("        {} {}", "[>]".dimmed(), proto);
@@ -591,8 +609,14 @@ fn check_protocol_sniffing(paths: &Paths, verbose: bool) -> bool {
             } else {
                 println!("{}", "[WARN]".yellow());
                 if verbose {
-                    println!("      {} No sniff rules found in route configuration", "[!]".yellow());
-                    println!("      {} Recommended: Add {{\"action\": \"sniff\"}} to route rules", "[*]".cyan());
+                    println!(
+                        "      {} No sniff rules found in route configuration",
+                        "[!]".yellow()
+                    );
+                    println!(
+                        "      {} Recommended: Add {{\"action\": \"sniff\"}} to route rules",
+                        "[*]".cyan()
+                    );
                 }
                 false
             }
@@ -650,28 +674,33 @@ fn check_deprecated_114(config: &serde_json::Value, verbose: bool) -> Vec<String
             issues.push("download_detour (1.14.0+: removed, use routing rules)".to_string());
         }
         if experimental.get("independent_cache").is_some() {
-            issues.push("independent_cache (1.14.0+: removed, use experimental.cache_file)".to_string());
+            issues.push(
+                "independent_cache (1.14.0+: removed, use experimental.cache_file)".to_string(),
+            );
         }
     }
 
     if let Some(cert_providers) = config.get("certificate_providers")
-        && cert_providers.get("acme").is_some() {
-            issues.push("certificate_providers.acme (1.14.0+: moved to experimental.ACME)".to_string());
-        }
+        && cert_providers.get("acme").is_some()
+    {
+        issues.push("certificate_providers.acme (1.14.0+: moved to experimental.ACME)".to_string());
+    }
 
     if let Some(endpoints) = config.get("endpoints").and_then(|e| e.as_array()) {
         for endpoint in endpoints {
             if endpoint.get("type") == Some(&serde_json::Value::String("tailscale".to_string()))
-                && endpoint.get("control_url").is_some() {
-                    issues.push("endpoints.tailscale.control_url (1.14.0+: removed)".to_string());
-                }
+                && endpoint.get("control_url").is_some()
+            {
+                issues.push("endpoints.tailscale.control_url (1.14.0+: removed)".to_string());
+            }
         }
     }
 
     if let Some(route) = config.get("route")
-        && route.get("store_rdrc").is_some() {
-            issues.push("route.store_rdrc (1.14.0+: removed)".to_string());
-        }
+        && route.get("store_rdrc").is_some()
+    {
+        issues.push("route.store_rdrc (1.14.0+: removed)".to_string());
+    }
 
     if verbose && !issues.is_empty() {
         println!("\n      {} sing-box 1.14.0 deprecations:", "[*]".cyan());
@@ -684,13 +713,18 @@ fn check_deprecated_113(config: &serde_json::Value, verbose: bool) -> Vec<String
 
     if let Some(inbounds) = config.get("inbounds").and_then(|i| i.as_array()) {
         for inbound in inbounds {
-            if inbound.get("sniff").is_some() || inbound.get("sniff_override_destination").is_some() {
-                issues.push("inbound sniff/sniff_override_destination (1.13.0+: use route.sniff)".to_string());
+            if inbound.get("sniff").is_some() || inbound.get("sniff_override_destination").is_some()
+            {
+                issues.push(
+                    "inbound sniff/sniff_override_destination (1.13.0+: use route.sniff)"
+                        .to_string(),
+                );
             }
             if inbound.get("type") == Some(&serde_json::Value::String("tun".to_string()))
-                && inbound.get("gsgo").is_some() {
-                    issues.push("inbound.tun.gsgo (1.13.0+: renamed to kernel_gso)".to_string());
-                }
+                && inbound.get("gsgo").is_some()
+            {
+                issues.push("inbound.tun.gsgo (1.13.0+: renamed to kernel_gso)".to_string());
+            }
         }
     }
 
@@ -701,9 +735,11 @@ fn check_deprecated_113(config: &serde_json::Value, verbose: bool) -> Vec<String
             }
             if (outbound.get("type") == Some(&serde_json::Value::String("block".to_string()))
                 || outbound.get("type") == Some(&serde_json::Value::String("dns".to_string())))
-                && outbound.get("outbound").is_some() {
-                    issues.push("outbound.block/dns with outbound field (1.13.0+: removed)".to_string());
-                }
+                && outbound.get("outbound").is_some()
+            {
+                issues
+                    .push("outbound.block/dns with outbound field (1.13.0+: removed)".to_string());
+            }
         }
     }
 
@@ -717,25 +753,28 @@ fn check_deprecated_112(config: &serde_json::Value, verbose: bool) -> Vec<String
     let mut issues = Vec::new();
 
     if let Some(dns) = config.get("dns").and_then(|d| d.as_object())
-        && let Some(servers) = dns.get("servers").and_then(|s| s.as_array()) {
-            for server in servers {
-                if let Some(srv_type) = server.get("type").and_then(|t| t.as_str())
-                    && srv_type == "dns" {
-                        issues.push("dns.servers[].type=dns (1.12.0+: use udp or tls)".to_string());
-                    }
-                if server.get("ip_version").is_some() {
-                    issues.push("dns.servers[].ip_version (1.12.0+: removed)".to_string());
-                }
-                if server.get("bounds").is_some() {
-                    issues.push("dns.servers[].bounds (1.12.0+: removed)".to_string());
-                }
+        && let Some(servers) = dns.get("servers").and_then(|s| s.as_array())
+    {
+        for server in servers {
+            if let Some(srv_type) = server.get("type").and_then(|t| t.as_str())
+                && srv_type == "dns"
+            {
+                issues.push("dns.servers[].type=dns (1.12.0+: use udp or tls)".to_string());
+            }
+            if server.get("ip_version").is_some() {
+                issues.push("dns.servers[].ip_version (1.12.0+: removed)".to_string());
+            }
+            if server.get("bounds").is_some() {
+                issues.push("dns.servers[].bounds (1.12.0+: removed)".to_string());
             }
         }
+    }
 
     if let Some(tls) = config.get("tls").and_then(|t| t.as_object())
-        && tls.get("ech").is_some() {
-            issues.push("tls.ech (1.12.0+: use TLS inbounds with ECH)".to_string());
-        }
+        && tls.get("ech").is_some()
+    {
+        issues.push("tls.ech (1.12.0+: use TLS inbounds with ECH)".to_string());
+    }
 
     if verbose && !issues.is_empty() {
         println!("\n      {} sing-box 1.12.0 deprecations:", "[*]".cyan());
@@ -788,20 +827,39 @@ fn check_deprecated_110(config: &serde_json::Value, verbose: bool) -> Vec<String
 fn check_deprecated_18(config: &serde_json::Value, verbose: bool) -> Vec<String> {
     let mut issues = Vec::new();
 
-    if let Some(rule_sets) = config.get("route").and_then(|r| r.get("rule_set")).and_then(|rs| rs.as_array()) {
+    if let Some(rule_sets) = config
+        .get("route")
+        .and_then(|r| r.get("rule_set"))
+        .and_then(|rs| rs.as_array())
+    {
         for rule_set in rule_sets {
             if let Some(rs_type) = rule_set.get("type").and_then(|t| t.as_str())
-                && (rs_type == "geoip" || rs_type == "geosite") {
-                    issues.push(format!("rule_set.type={} (1.8.0+: use remote format)", rs_type));
-                }
+                && (rs_type == "geoip" || rs_type == "geosite")
+            {
+                issues.push(format!(
+                    "rule_set.type={} (1.8.0+: use remote format)",
+                    rs_type
+                ));
+            }
         }
     }
 
     if let Some(experimental) = config.get("experimental") {
-        if experimental.get("clash_api").and_then(|c| c.get("cache_file")).is_some() {
-            issues.push("experimental.clash_api.cache_file (1.8.0+: use experimental.cache_file)".to_string());
+        if experimental
+            .get("clash_api")
+            .and_then(|c| c.get("cache_file"))
+            .is_some()
+        {
+            issues.push(
+                "experimental.clash_api.cache_file (1.8.0+: use experimental.cache_file)"
+                    .to_string(),
+            );
         }
-        if experimental.get("clash_api").and_then(|c| c.get("store_mode")).is_some() {
+        if experimental
+            .get("clash_api")
+            .and_then(|c| c.get("store_mode"))
+            .is_some()
+        {
             issues.push("experimental.clash_api.store_mode (1.8.0+: removed)".to_string());
         }
     }
@@ -817,30 +875,52 @@ fn check_hysteria2(paths: &Paths, verbose: bool) -> bool {
 
     if let Ok(config_str) = fs::read_to_string(paths.get_input_config_path())
         && let Ok(config) = serde_json::from_str::<serde_json::Value>(&config_str)
-            && let Some(inbounds) = config.get("inbounds").and_then(|i| i.as_array())
-                && let Some(hy2) = inbounds.iter().find(|i| {
-                    i.get("type") == Some(&serde_json::Value::String("hysteria2".to_string()))
-                }) {
-                    let port = hy2.get("listen_port").and_then(|p| p.as_u64()).unwrap_or(8443);
-                    let has_obfs = hy2.get("obfs").is_some();
-                    let has_limits = hy2.get("up_mbps").is_some() || hy2.get("down_mbps").is_some();
-                    let has_server_name = hy2.get("tls")
+        && let Some(inbounds) = config.get("inbounds").and_then(|i| i.as_array())
+        && let Some(hy2) = inbounds
+            .iter()
+            .find(|i| i.get("type") == Some(&serde_json::Value::String("hysteria2".to_string())))
+    {
+        let port = hy2
+            .get("listen_port")
+            .and_then(|p| p.as_u64())
+            .unwrap_or(8443);
+        let has_obfs = hy2.get("obfs").is_some();
+        let has_limits = hy2.get("up_mbps").is_some() || hy2.get("down_mbps").is_some();
+        let has_server_name = hy2
+            .get("tls")
+            .and_then(|t| t.get("server_name"))
+            .and_then(|s| s.as_str())
+            .filter(|s| !s.is_empty())
+            .is_some();
+
+        println!("{}", "[OK]".green());
+        if verbose {
+            println!("      {} Port: {}", "[*]".cyan(), port);
+            println!(
+                "      {} Obfuscation: {}",
+                "[*]".cyan(),
+                if has_obfs { "enabled" } else { "disabled" }
+            );
+            println!(
+                "      {} Speed Limits: {}",
+                "[*]".cyan(),
+                if has_limits { "set" } else { "unlimited" }
+            );
+            println!(
+                "      {} Domain: {}",
+                "[*]".cyan(),
+                if has_server_name {
+                    hy2.get("tls")
                         .and_then(|t| t.get("server_name"))
                         .and_then(|s| s.as_str())
-                        .filter(|s| !s.is_empty())
-                        .is_some();
-
-                    println!("{}", "[OK]".green());
-                    if verbose {
-                        println!("      {} Port: {}", "[*]".cyan(), port);
-                        println!("      {} Obfuscation: {}", "[*]".cyan(), if has_obfs { "enabled" } else { "disabled" });
-                        println!("      {} Speed Limits: {}", "[*]".cyan(), if has_limits { "set" } else { "unlimited" });
-                        println!("      {} Domain: {}", "[*]".cyan(), if has_server_name {
-                            hy2.get("tls").and_then(|t| t.get("server_name")).and_then(|s| s.as_str()).unwrap_or("N/A")
-                        } else { "using IP" });
-                    }
-                    return true;
+                        .unwrap_or("N/A")
+                } else {
+                    "using IP"
                 }
+            );
+        }
+        return true;
+    }
     println!("{}", "[INFO]".cyan());
     if verbose {
         println!("      {} No Hysteria2 inbound configured", "[*]".cyan());

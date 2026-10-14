@@ -2,97 +2,60 @@ name: Update SNI Domain List
 
 on:
   schedule:
-    # Run every Monday at 00:00 UTC (08:00 Beijing time)
     - cron: '0 0 * * 1'
   workflow_dispatch:
     inputs:
       max_domains:
-        description: 'Max domains to test'
+        description: Maximum domains to test (1-2000)
         required: false
         default: '500'
         type: string
 
-env:
-  REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
+permissions:
+  contents: read
+
+concurrency:
+  group: update-sni
+  cancel-in-progress: false
 
 jobs:
   update-sni:
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     permissions:
       contents: write
       pull-requests: write
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version: '3.11'
-
-      - name: Run SNI domain fetcher
-        id: fetch
+          python-version: '3.12'
+      - name: Fetch and validate SNI domains
+        env:
+          MAX_DOMAINS: ${{ inputs.max_domains || '500' }}
         run: |
+          python - <<'PY'
+          import os
+          value = os.environ['MAX_DOMAINS']
+          assert value.isdecimal() and 1 <= int(value) <= 2000, 'max_domains must be 1-2000'
+          PY
           python scripts/fetch-sni-domains.py \
-            --max-domains ${{ inputs.max_domains || '500' }} \
-            --threads 30 \
-            --valuation-threshold 100 \
-            --max-val-domains 200 \
+            --max-domains "$MAX_DOMAINS" --threads 20 \
             --output overlay/usr/share/mimic-node/sni.txt
-
-      - name: Check output file
+      - name: Count validated domains
+        id: count
         run: |
           lines=$(wc -l < overlay/usr/share/mimic-node/sni.txt)
-          echo "Final domains: $lines"
-          echo "domain_count=$lines" >> $GITHUB_OUTPUT
-          head -20 overlay/usr/share/mimic-node/sni.txt
-
-      - name: Get current date
-        id: date
-        run: |
-          date=$(date +%Y-%m-%d)
-          echo "release_date=$date" >> $GITHUB_OUTPUT
-
-      - name: Create or update PR
-        uses: peter-evans/create-pull-request@v7
+          test "$lines" -gt 0
+          echo "domain_count=$lines" >> "$GITHUB_OUTPUT"
+      - name: Create or update SNI review PR
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: 'chore(sni): update domain list'
-          title: 'chore(sni): Update SNI domain list'
+          title: 'chore(sni): update verified SNI domains'
           body: |
-            ## SNI Domain List Update
-
-            Auto-generated SNI domain list update.
-
-            **Domains found:** ${{ steps.count.outputs.domain_count }}
+            TLS 1.3 + ALPN h2 checks passed for ${{ steps.count.outputs.domain_count }} domains.
+            Review server reachability before applying. Empty fetch results preserve the existing list.
           branch: chore/update-sni-list
           delete-branch: true
-          add-paths: |
-            overlay/usr/share/mimic-node/sni.txt
-
-      - name: Create GitHub Release
-        if: github.event_name == 'schedule'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: sni-${{ steps.date.outputs.release_date }}
-          name: SNI Domain List ${{ steps.date.outputs.release_date }}
-          body: |
-            ## SNI Domain List
-
-            Auto-generated SNI domain list updated on ${{ steps.date.outputs.release_date }}.
-
-            **Compatible domains:** ${{ steps.count.outputs.domain_count }}
-
-            Filtered by: TLS 1.3 + ALPN h2 → Clash proxy rules → HumbleWorth valuation ≥ $100
-          files: overlay/usr/share/mimic-node/sni.txt
-          draft: false
-
-      - name: Upload release artifact
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v5
-        with:
-          name: sni-domains-${{ steps.date.outputs.release_date }}
-          path: overlay/usr/share/mimic-node/sni.txt
-          retention-days: 30
+          add-paths: overlay/usr/share/mimic-node/sni.txt

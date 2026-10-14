@@ -78,7 +78,7 @@ pub enum Hysteria2Commands {
         #[arg(short = 'm', long = "masquerade")]
         masquerade: Option<String>,
 
-        /// Domain for certbot to generate certificate
+        /// TLS server name (provide existing certificate/key files)
         #[arg(short = 'd', long = "domain")]
         domain: Option<String>,
 
@@ -317,9 +317,9 @@ pub enum Commands {
         force: bool,
     },
 
-    /// Upgrade config to latest default with new features (merge new defaults, keep user data)
+    /// Migrate supported legacy sing-box configuration fields
     Upgrade {
-        /// Auto merge new defaults without prompting
+        /// Stage supported compatibility migrations without prompting
         #[arg(short, long)]
         auto: bool,
 

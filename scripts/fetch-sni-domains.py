@@ -10,10 +10,14 @@ import json
 import math
 import os
 import re
+import stat
 import string
 import subprocess
+import sys
+import tempfile
 import time
 from collections import Counter
+from pathlib import Path
 
 # ─── Clash Ruleset China-Proxy Filter ───────────────────────────────
 
@@ -1334,7 +1338,35 @@ def test_domain_openssl(domain: str, timeout: float = 5.0) -> tuple[str, bool]:
         return (domain, False)
 
 
-def main():
+def write_domain_list(output: str, domains: list[str]) -> None:
+    """Replace the output only after a nonempty list has been fully written."""
+    if not domains:
+        raise ValueError("No domains passed; existing output has been preserved")
+
+    destination = Path(output)
+    mode = stat.S_IMODE(destination.stat().st_mode) if destination.exists() else 0o644
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            for domain in domains:
+                stream.write(domain + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+            os.fchmod(stream.fileno(), mode)
+        os.replace(temporary, destination)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Fetch and test domains for Reality SNI",
     )
@@ -1385,7 +1417,7 @@ def main():
         action="store_true",
         help="Skip semantic filter (remove meaningless domains like abc.xxx)",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     print("=" * 60)
     print("Reality SNI Domain Fetcher")
@@ -1459,11 +1491,9 @@ def main():
 
     if args.sources_only:
         print("\n[SOURCES ONLY] Skipping domain testing.")
-        with open(args.output, "w") as f:
-            for domain in sorted(valid_domains):
-                f.write(domain + "\n")
+        write_domain_list(args.output, sorted(valid_domains))
         print(f"Written {len(valid_domains)} domains to {args.output}")
-        return
+        return 0
 
     # Step 3: Clash ruleset China-proxy filter (BEFORE TLS to reduce TLS calls)
     # Exclude domains explicitly in PROXY list (known blocked in China).
@@ -1614,9 +1644,7 @@ def main():
         reverse=True,
     )
 
-    with open(args.output, "w") as f:
-        for domain in high_value_domains:
-            f.write(domain + "\n")
+    write_domain_list(args.output, high_value_domains)
 
     print(f"  Final domains: {len(high_value_domains)}")
     print(f"  Output written to: {args.output}")
@@ -1641,7 +1669,16 @@ def main():
         for d in high_value_domains[:10]:
             score = domain_scores.get(d, 0)
             print(f"    - {d}  (${score:.2f})" if score > 0 else f"    - {d}")
+    return 0
+
+
+def run(argv=None) -> int:
+    try:
+        return main(argv)
+    except (OSError, ValueError) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(run())

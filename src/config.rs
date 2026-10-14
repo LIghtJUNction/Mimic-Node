@@ -17,19 +17,19 @@ pub struct Inbound {
     #[serde(rename = "type")]
     pub protocol_type: String,
 
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub tag: String,
 
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub listen: String,
 
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub listen_port: u16,
 
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub users: Vec<Value>,
 
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tls: Option<TlsConfig>,
 
     // Capture other fields to avoid losing data when serializing back
@@ -38,59 +38,14 @@ pub struct Inbound {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct User {
-    #[serde(default)]
-    pub name: String,
-    #[serde(default)]
-    pub uuid: String,
-    #[serde(default)]
-    pub flow: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Hysteria2User {
-    pub password: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Hysteria2Inbound {
-    #[serde(rename = "type")]
-    pub protocol_type: String,
-    #[serde(default)]
-    pub tag: String,
-    #[serde(default)]
-    pub listen: String,
-    #[serde(default)]
-    pub masquerade: String,
-    #[serde(default)]
-    pub listen_port: u16,
-    #[serde(default)]
-    pub users: Vec<Hysteria2User>,
-    #[serde(default)]
-    pub tls: Option<Hysteria2TlsConfig>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Hysteria2TlsConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default)]
-    pub alpn: Vec<String>,
-    #[serde(default)]
-    pub key_path: String,
-    #[serde(default)]
-    pub cert_path: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TlsConfig {
     #[serde(default)]
     pub enabled: bool,
 
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub server_name: String,
 
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reality: Option<RealityConfig>,
 
     #[serde(flatten)]
@@ -121,4 +76,41 @@ pub struct HandshakeConfig {
     pub server: String,
     #[serde(default)]
     pub server_port: u16,
+
+    #[serde(flatten)]
+    pub other: HashMap<String, Value>,
+}
+
+fn is_zero(value: &u16) -> bool {
+    *value == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn roundtrip_preserves_tun_schema_and_reality_dial_options() {
+        let input = json!({
+            "inbounds": [
+                {"type": "tun", "tag": "tun-in", "address": ["172.16.0.1/30"], "auto_route": true},
+                {"type": "vless", "tls": {"enabled": true, "reality": {
+                    "enabled": true, "private_key": "key", "short_id": [],
+                    "handshake": {"server": "example.com", "server_port": 443, "bind_interface": "eth0"}
+                }}}
+            ], "outbounds": []
+        });
+        let parsed: SingBoxConfig = serde_json::from_value(input).unwrap();
+        let output = serde_json::to_value(parsed).unwrap();
+        let tun = &output["inbounds"][0];
+        assert!(tun.get("listen").is_none());
+        assert!(tun.get("listen_port").is_none());
+        assert!(tun.get("users").is_none());
+        assert!(tun.get("tls").is_none());
+        assert_eq!(
+            output["inbounds"][1]["tls"]["reality"]["handshake"]["bind_interface"],
+            "eth0"
+        );
+    }
 }
