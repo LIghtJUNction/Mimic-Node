@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "mimictl")]
+#[command(name = "mimictl", version)]
 #[command(about = "Mimic-Node control tool", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]

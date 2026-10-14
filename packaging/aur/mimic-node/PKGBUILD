@@ -44,6 +44,7 @@ check() {
     _cargo_env
     cargo test --all-features --frozen
     python -B -m unittest discover -s tests -p 'test_packaging.py' -v
+    python -B scripts/smoke-test.py --binary target/debug/mimictl
 }
 
 package() {
