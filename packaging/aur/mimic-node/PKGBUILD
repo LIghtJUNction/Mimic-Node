@@ -18,8 +18,7 @@ provides=('mimictl')
 conflicts=('mimic-node-git')
 install=mimic-node.install
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-# Replaced with the published v0.2.0 archive hash before AUR publication.
-sha256sums=('PENDING_RELEASE_ARCHIVE')
+sha256sums=('7c2bb958e922fc2155fa69575e8b784dd6e7eff0a287659d32dde2a6eabd1a67')
 
 _cargo_env() {
     export RUSTUP_TOOLCHAIN=stable

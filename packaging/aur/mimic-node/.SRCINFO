@@ -28,6 +28,6 @@ pkgbase = mimic-node
 	provides = mimictl
 	conflicts = mimic-node-git
 	source = mimic-node-0.2.0.tar.gz::https://github.com/LIghtJUNction/Mimic-Node/archive/refs/tags/v0.2.0.tar.gz
-	sha256sums = PENDING_RELEASE_ARCHIVE
+	sha256sums = 7c2bb958e922fc2155fa69575e8b784dd6e7eff0a287659d32dde2a6eabd1a67
 
 pkgname = mimic-node
