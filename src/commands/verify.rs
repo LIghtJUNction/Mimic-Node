@@ -114,39 +114,22 @@ pub fn verify(
         eprintln!("{} Private key is empty.", "[ERROR]".red());
         errors += 1;
     } else {
-        match general_purpose::URL_SAFE_NO_PAD.decode(&reality.private_key) {
+        match general_purpose::URL_SAFE_NO_PAD
+            .decode(&reality.private_key)
+            .or_else(|_| general_purpose::STANDARD.decode(&reality.private_key))
+        {
+            Ok(decoded) if decoded.len() == 32 => priv_key_bytes = decoded,
             Ok(decoded) => {
-                if decoded.len() != 32 {
-                    eprintln!(
-                        "{} Private key length invalid (expected 32 bytes, got {}).",
-                        "[ERROR]".red(),
-                        decoded.len()
-                    );
-                    errors += 1;
-                } else {
-                    priv_key_bytes = decoded;
-                }
+                eprintln!(
+                    "{} Private key length invalid (expected 32 bytes, got {}).",
+                    "[ERROR]".red(),
+                    decoded.len()
+                );
+                errors += 1;
             }
-            Err(_) => {
-                // Try standard base64 if URL safe fails
-                match general_purpose::STANDARD.decode(&reality.private_key) {
-                    Ok(decoded) => {
-                        if decoded.len() != 32 {
-                            eprintln!(
-                                "{} Private key length invalid (expected 32 bytes, got {}).",
-                                "[ERROR]".red(),
-                                decoded.len()
-                            );
-                            errors += 1;
-                        } else {
-                            priv_key_bytes = decoded;
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("{} Private key is not valid Base64: {}", "[ERROR]".red(), e);
-                        errors += 1;
-                    }
-                }
+            Err(e) => {
+                eprintln!("{} Private key is not valid Base64: {}", "[ERROR]".red(), e);
+                errors += 1;
             }
         }
     }
