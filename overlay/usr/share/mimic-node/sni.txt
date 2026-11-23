@@ -1,5 +1,4 @@
 signin.aws.amazon.com
-code.visualstudio.com
 www.visualstudio.com
 www.salesforce.com
 www.cloudflare.com
@@ -11,12 +10,10 @@ portal.azure.com
 www.shopify.com
 www.outlook.com
 www.dropbox.com
-copilot-stg.com
 chainid.network
 bitcoincore.org
 arabidopsis.org
 anythingllm.com
-alpinelinux.org
 yibaochina.com
 www.stripe.com
 www.reddit.com
@@ -37,14 +34,12 @@ speedtest.live
 speedmeter.dev
 speedcheck.dev
 speed-test.com
-sp.msp-ict.com
 shuziyimin.org
 rockylinux.org
 realvision.com
 postgresql.org
 polymarket.com
 physiology.org
-onionshare.org
 mytokenapi.com
 my-formosa.com
 minecraft.wiki
@@ -65,13 +60,13 @@ clashverge.dev
 clashparty.org
 chocolatey.org
 camerfirma.com
+buzzsprout.com
 blockchair.com
 blockchain.com
 blinkload.zone
 artixlinux.org
 allkeyshop.com
 www.apple.com
-wireshark.org
 wireguard.com
 wikileaks.org
 web3modal.org
@@ -91,7 +86,6 @@ proof.ovh.net
 pincong.rocks
 phantomjs.org
 packagist.org
-openresty.org
 noxygames.com
 nextapple.com
 newyorker.com
@@ -99,7 +93,6 @@ neurology.org
 neoforged.net
 naturemag.org
 motopress.com
-megabitus.com
 maple.finance
 macrumors.com
 linuxmint.com
@@ -172,8 +165,6 @@ context7.com
 coingate.com
 coindesk.com
 coinbase.com
-clashyun.com
-boldgrid.com
 bitstamp.net
 bitlayer.org
 bitfinex.com
@@ -183,11 +174,9 @@ akasha.world
 youtooz.com
 www.box.com
 wplace.live
-weblate.org
 warroom.org
 videojs.com
 uniswap.org
-tunsafe.com
 tribler.org
 termius.com
 stunnel.org
@@ -206,7 +195,6 @@ openssl.org
 onexray.com
 novelai.net
 motocms.com
-mobatek.net
 megaeth.com
 medrxiv.org
 mariadb.org
@@ -224,7 +212,6 @@ d-trust.net
 coredao.org
 copilot.com
 coinmap.org
-cloudwp.dev
 clojure.org
 clashmi.app
 civitai.com
@@ -241,6 +228,7 @@ uproxy.org
 socrec.org
 sis001.com
 ripple.com
+replit.com
 ramon.cash
 paxful.com
 parler.com
@@ -291,7 +279,6 @@ axios.com
 auth0.com
 atypi.org
 arxiv.org
-yale.edu
 v2ex.com
 ovid.com
 ooni.org
